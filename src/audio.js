@@ -69,3 +69,35 @@ export function playSfx(name){
       break;
   }
 }
+
+// Background music. Decoding the file doesn't need a user gesture, so it's
+// safe to kick off during boot — but actually starting playback does (every
+// mobile/desktop browser blocks audio until the first tap/click/keypress),
+// so startBgm() must only be called from inside a real input handler.
+const BGM_TRACKS = [
+  'assets/audio/bgm/Neon Hero Run.mp3',
+  'assets/audio/bgm/Neon Quest Run.mp3',
+];
+
+let bgmBuffer = null;
+let bgmSource = null;
+
+export async function loadBgm(){
+  const ctx = getCtx();
+  const url = BGM_TRACKS[Math.floor(Math.random() * BGM_TRACKS.length)];
+  const res = await fetch(encodeURI(url));
+  const data = await res.arrayBuffer();
+  bgmBuffer = await ctx.decodeAudioData(data);
+}
+
+export function startBgm(){
+  if(!bgmBuffer || bgmSource) return; // not loaded yet, or already playing
+  const ctx = getCtx();
+  const gain = ctx.createGain();
+  gain.gain.value = 0.35;
+  bgmSource = ctx.createBufferSource();
+  bgmSource.buffer = bgmBuffer;
+  bgmSource.loop = true;
+  bgmSource.connect(gain).connect(ctx.destination);
+  bgmSource.start(0);
+}
