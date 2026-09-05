@@ -1,0 +1,70 @@
+:root{
+  --ink:#111111;
+  --paper:#f4e9d8;
+  --yellow:#ffd23f;
+  --red:#ff4b3e;
+  --green:#3ecf6e;
+  --blue:#3f8efc;
+  --grey:#b9ad98;
+  --pink:#ff6fd8;
+  --sky:#5ec8f8;
+}
+html,body{
+  margin:0; height:100%; overflow:hidden;
+  background:var(--paper);
+  font-family: 'Arial Black', Impact, sans-serif;
+  -webkit-user-select:none; user-select:none;
+  touch-action:none;
+}
+#wrap{
+  position:relative;
+  width:100%; height:100%;
+  display:flex; align-items:center; justify-content:center;
+}
+canvas{
+  background:#000;
+  border:5px solid var(--ink);
+  box-shadow: 10px 10px 0 var(--ink);
+  touch-action:none;
+  max-width:95vw; max-height:90vh;
+}
+#hud{
+  position:absolute; top:18px; left:18px;
+  display:flex; flex-direction:column; align-items:flex-start;
+  gap:8px;
+  z-index:2;
+}
+.chip{
+  background:var(--yellow);
+  border:4px solid var(--ink);
+  padding:6px 14px;
+  font-size:20px;
+  box-shadow:4px 4px 0 var(--ink);
+  transform:rotate(-2deg);
+}
+.chip-points{ background:var(--pink); transform:rotate(2deg); }
+.chip-time{ background:var(--sky); transform:rotate(-1deg); }
+.chip-lives{ background:var(--red); color:var(--paper); transform:rotate(2deg); }
+#msg{
+  position:absolute; bottom:24px; left:50%;
+  transform:translateX(-50%) rotate(-2deg);
+  background:var(--red);
+  color:var(--paper);
+  border:5px solid var(--ink);
+  padding:10px 20px;
+  font-size:22px;
+  box-shadow:6px 6px 0 var(--ink);
+  display:none;
+  text-align:center;
+  pointer-events:none;
+  z-index:2;
+}
+#msg.win{ background:var(--green); }
+#msg.gameover{ background:#111; color:var(--red); border-color:var(--red); }
+#msg small{
+  display:block;
+  font-size:13px;
+  margin-top:4px;
+  font-weight:normal;
+  font-family:Arial, sans-serif;
+}
