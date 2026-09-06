@@ -18,31 +18,62 @@ function scatterYs(count, bandHalf, minGap){
   return ys;
 }
 
+// Spacing is built around what the player can actually cross. A plain hop
+// reaches v²/g — about 510px at power 1, 970px at power 2 — while a rope
+// swing carries roughly 1100px plus whatever speed you leave the arc with.
+// So the far grips sit in rope territory, and every wave also plants one or
+// two deliberately close ones a plain hop can make, as a visible safe route.
+const HOP_MIN_DX = 380, HOP_MAX_DX = 580;
+const SWING_MIN_DX = 900, SWING_MAX_DX = 1350;
+
 // Generates one course: a start node, several "waves" moving left to right,
 // each scattering a few nodes across a wide vertical band, and a goal.
 // Nodes can be grabbed in any order once you're airborne — this only decides
 // their layout, not the order you have to visit them in.
 export function generateLevel({ waves = 5, rows = 3 } = {}){
-  const list = [{ x: 0, y: 0, r: 44, isGoal: false, grabbed: true }];
+  const start = { x: 0, y: 0, r: 44, isGoal: false, grabbed: true };
+  const list = [start];
 
+  let prevWave = [start];
   let x = 0;
+
   for(let w = 1; w <= waves; w++){
-    x += 280 + Math.random() * 140 + w * 10;
-    const r = Math.max(22, 40 - w * 1.6);
-    const ys = scatterYs(rows, 380, 100);
-    for(const baseY of ys){
-      const nodeX = x + (Math.random() * 160 - 80);
-      const nodeY = baseY + (Math.random() * 60 - 30);
+    x += SWING_MIN_DX + Math.random() * (SWING_MAX_DX - SWING_MIN_DX) + w * 20;
+    const r = Math.max(30, 44 - w * 1.2); // shrinks more gently than before — these are much longer flights to land
+    const hopCount = Math.random() < 0.5 ? 2 : 1;
+    const ys = scatterYs(rows, 620, 180);
+    const wave = [];
+
+    for(let i = 0; i < rows; i++){
+      let nodeX, nodeY;
+      if(i < hopCount){
+        // A close grip, hung off a node from the previous wave so it's a real
+        // hop between two specific grips. The first one anchors to that
+        // wave's furthest-right node so the safe route keeps pace with the
+        // course; a second one can hang off anywhere in the wave.
+        const from = i === 0
+          ? prevWave.reduce((a, b) => (b.x > a.x ? b : a))
+          : prevWave[Math.floor(Math.random() * prevWave.length)];
+        nodeX = from.x + HOP_MIN_DX + Math.random() * (HOP_MAX_DX - HOP_MIN_DX);
+        // Level-ish or below, never far above — an upward hop eats range fast.
+        nodeY = from.y + (Math.random() * 380 - 120);
+      } else {
+        nodeX = x + (Math.random() * 240 - 120);
+        nodeY = ys[i] + (Math.random() * 100 - 50);
+      }
       const tier = pickNodeTier();
-      list.push({
+      const node = {
         x: nodeX, y: nodeY, r, isGoal: false, grabbed: false,
         tierColor: tier.color, points: tier.points, mark: tier.mark
-      });
+      };
+      wave.push(node);
+      list.push(node);
     }
+    prevWave = wave;
   }
 
-  x += 300 + Math.random() * 110;
-  const y = Math.random() * 200 - 100;
+  x += 800 + Math.random() * 400;
+  const y = Math.random() * 400 - 200;
   list.push({ x, y, r: 46, isGoal: true, grabbed: false });
 
   return list;
