@@ -30,7 +30,7 @@ const ROPE_CATCH_SPEED_KEEP = 1; // fraction of your speed a new rope keeps when
 const LAND_FORGIVENESS = 6;   // world units of extra landing leniency on top of the node/player radii
 const SWING_CAST_ANGLE = 45 * Math.PI / 180; // fixed angle (from straight down) the rope always attaches at — only left/right depends on the drag, not distance. Also ropeSwing1/2's frame-0 pose.
 const SWING_TURN_MIN_ANGLE = 6 * Math.PI / 180; // reversals smaller than this are ignored as noise — no turn flourish for tiny wobbles
-const SWING_TURN_BASE_MS = 260; // total turn-flourish duration for a peak at SWING_CAST_ANGLE — smaller peaks (a dying swing) scale this up, wider ones scale it down
+const SWING_TURN_ARC = 12 * Math.PI / 180; // fixed angular span (not a fraction of the peak) the turn plays out over — a fixed span still takes longer for a small/dying peak, since gravity's pull back through it is weaker there too
 const ROPE_FADE_MS = 1400;      // how long a released rope lingers as a fading afterimage
 const ROPE_DOT_SPACING_PX = 11;      // spacing between rope dots at zoom 1
 // Fraction of the player's own on-screen size (PLAYER_DISPLAY_SIZE * zoom)
@@ -448,17 +448,7 @@ export function createGame(canvas, images){
             // but reaching across as you reverse, so swing1/2 (rope in the
             // opposite hand) should alternate here too.
             swingSlot = swingSlot === 1 ? 2 : 1;
-            // Total turn duration scales with how hard gravity pulls you back
-            // off this peak (∝ sin(peak)) rather than with live angle — a
-            // small, dying swing accelerates away from its peak gently and
-            // gets a long, slow turn; a wide swing snaps back hard and gets a
-            // quick one. Crucially this is decided ONCE, here, so the 3
-            // frames land at even time intervals — driving progress from the
-            // live angle instead made frame 0 (near-zero velocity right at
-            // the peak) linger, then crammed the rest into whatever time was left.
-            const refSin = Math.max(0.0001, Math.sin(flight.swingPrevAbsAngle));
-            flight.turnDurationMs = SWING_TURN_BASE_MS * Math.sin(SWING_CAST_ANGLE) / refSin;
-            flight.turnStartMs = now;
+            flight.turnPeakAngle = flight.swingPrevAbsAngle; // the crest this turn plays back from
             playPlayerAnim(anim, 'swingTurn');
           }
         } else if(!flight.swingGrowing && absAngle > flight.swingPrevAbsAngle){
@@ -467,7 +457,15 @@ export function createGame(canvas, images){
         flight.swingPrevAbsAngle = absAngle;
 
         if(anim.current === 'swingTurn'){
-          const progress = (now - flight.turnStartMs) / flight.turnDurationMs;
+          // Driven by the same live angle as ropeSwing1/2 (see below), not a
+          // separate clock — so its pace matches theirs exactly at the
+          // handoff, in both directions: a fast, wide swing rips through it
+          // just as fast as it rips through the surrounding swing frames, and
+          // a slow, dying one crawls through both alike. Capping the span at
+          // the peak itself keeps a peak smaller than SWING_TURN_ARC from
+          // needing to swing past vertical to ever finish.
+          const span = Math.min(flight.turnPeakAngle, SWING_TURN_ARC);
+          const progress = span > 0 ? (flight.turnPeakAngle - absAngle) / span : 1;
           if(progress >= 1) playPlayerAnim(anim, 'ropeSwing' + swingSlot);
           else setPlayerSwingFrame(anim, images, progress);
         }
