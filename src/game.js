@@ -29,7 +29,7 @@ const ROPE_RELEASE_HOP = 4;   // small upward kick on dismounting a rope (not on
 const ROPE_CATCH_SPEED_KEEP = 1; // fraction of your speed a new rope keeps when it catches you: 1 = chaining ropes costs nothing, lower = each catch bleeds some speed
 const LAND_FORGIVENESS = 6;   // world units of extra landing leniency on top of the node/player radii
 const SWING_CAST_ANGLE = 45 * Math.PI / 180; // fixed angle (from straight down) the rope always attaches at — only left/right depends on the drag, not distance. Also ropeSwing1/2's frame-0 pose.
-const SWING_TURN_MIN_ANGLE = 6 * Math.PI / 180; // reversals smaller than this are ignored as noise — no turn flourish for tiny wobbles
+const SWING_TURN_MIN_ANGLE = 15 * Math.PI / 180; // crests smaller than this skip the turn flourish entirely — a nearly settled swing just rocks through the middle frames instead
 const SWING_TURN_ARC = 12 * Math.PI / 180; // fixed angular span (not a fraction of the peak) the turn plays out over — a fixed span still takes longer for a small/dying peak, since gravity's pull back through it is weaker there too
 const ROPE_FADE_MS = 1400;      // how long a released rope lingers as a fading afterimage
 const ROPE_DOT_SPACING_PX = 11;      // spacing between rope dots at zoom 1
@@ -472,7 +472,13 @@ export function createGame(canvas, images){
           // the peak itself keeps a peak smaller than SWING_TURN_ARC from
           // needing to swing past vertical to ever finish.
           const span = Math.min(flight.turnPeakAngle, SWING_TURN_ARC);
-          const progress = span > 0 ? (flight.turnPeakAngle - absAngle) / span : 1;
+          const swept = span > 0 ? (flight.turnPeakAngle - absAngle) / span : 1;
+          // sqrt, because a pendulum leaves a crest from rest: angle travelled
+          // grows as t², so a progress bar linear in ANGLE crawls through
+          // frame 0 and then blurs 1 and 2. Since travel ∝ t², √travel ∝ t —
+          // taking the root spreads the frames evenly in TIME instead, so all
+          // three are actually readable, still with no clock involved.
+          const progress = Math.sqrt(Math.max(0, swept));
           if(progress >= 1) playPlayerAnim(anim, 'ropeSwing' + swingSlot);
           else setPlayerSwingFrame(anim, images, progress);
         }
@@ -483,7 +489,14 @@ export function createGame(canvas, images){
           // |angle| here instead would make the frame index go down then back
           // up as you pass through vertical, looking like it plays out of order.
           const phase = (flight.castAngle - angle) / (2 * flight.castAngle);
-          setPlayerSwingFrame(anim, images, phase);
+          // Squeeze the frame range toward the middle as the swing dies down:
+          // phase alone always spans the full strip across whatever this leg's
+          // crest happens to be, so a barely-moving 8° wobble would otherwise
+          // still strike the most extreme poses in the strip. Scaling by how
+          // big this leg is against a full-amplitude one keeps a gentle swing
+          // on the gentle middle frames.
+          const reach = Math.min(1, Math.abs(flight.castAngle) / SWING_CAST_ANGLE);
+          setPlayerSwingFrame(anim, images, 0.5 + (phase - 0.5) * reach);
         }
       }
 
