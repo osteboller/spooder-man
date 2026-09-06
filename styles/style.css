@@ -46,7 +46,10 @@ canvas{
   position:absolute; top:18px; left:18px;
   display:none; flex-direction:column; align-items:flex-start;
   gap:8px;
-  z-index:2;
+  /* Above screen-fade/overlay (z-index 4/5) on purpose, not just above the
+     old z-index:2 — canvas-wrap's dimming should never be able to cover
+     these regardless of stacking-context nesting details. */
+  z-index:10;
 }
 .chip{
   background:var(--yellow);
@@ -106,7 +109,7 @@ canvas{
   position:absolute; top:18px; right:18px;
   display:flex; flex-direction:column; align-items:flex-end;
   gap:8px;
-  z-index:2;
+  z-index:10; /* matches #hud — see its comment */
 }
 .icon-btn{
   width:44px; height:44px;
@@ -118,9 +121,16 @@ canvas{
   cursor:pointer;
   display:flex; align-items:center; justify-content:center;
   padding:0;
+  /* Same hand-placed-sticker look as the HUD chips: a per-button tilt via
+     --rot (set below), kept through the pressed state too so it doesn't
+     visually "un-rotate" on tap. */
+  transform:rotate(var(--rot, 0deg));
 }
-.icon-btn:active{ transform:translate(2px,2px); box-shadow:2px 2px 0 var(--ink); }
+.icon-btn:active{ transform:rotate(var(--rot, 0deg)) translate(2px,2px); box-shadow:2px 2px 0 var(--ink); }
 .icon-btn-muted{ background:var(--grey); opacity:0.6; }
+#btn-options{ --rot:-2deg; }
+#btn-music{ --rot:2deg; background:var(--sky); }
+#btn-sfx{ --rot:-1deg; background:var(--pink); }
 /* Fades via opacity instead of an instant [hidden] snap — stays in the DOM
    (invisible + non-interactive) while closed so the transition has something
    to animate. game.js is told to pause/resume in lockstep with this (see
