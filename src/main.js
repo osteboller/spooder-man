@@ -16,9 +16,9 @@ async function boot(){
 
   let bgmStarted = false;
   bindInput(canvas, {
-    onDown: () => {
+    onDown: (pos) => {
       if(!bgmStarted){ bgmStarted = true; startBgm(); } // first tap/click/key — the only place autoplay is allowed
-      game.handleDown(ui);
+      game.handleDown(ui, pos);
     },
     onUp: (dragDelta) => game.handleUp(ui, dragDelta)
   });

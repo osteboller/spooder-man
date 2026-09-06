@@ -1,9 +1,16 @@
 // Picks one of the city skyline images per level and tiles it horizontally,
 // scrolling slower than the foreground (parallax) so the world feels deep.
-export const BACKGROUND_KEYS = ['bgNight1', 'bgNight2', 'bgDay1'];
+export const BACKGROUND_KEYS = ['bgDay1', 'bgNight1', 'bgNight2', 'bgEvening1'];
 
-export function pickBackground(images){
-  const key = BACKGROUND_KEYS[Math.floor(Math.random() * BACKGROUND_KEYS.length)];
+// The first time through, courses step through BACKGROUND_KEYS in this fixed
+// order (one per call — game.js advances `cycleIndex` each time a course
+// starts, i.e. on level-complete or game-over, not on a mid-course respawn),
+// so a new player sees all four deliberately. Once cycleIndex runs past the
+// list, it's random from then on.
+export function pickBackground(images, cycleIndex){
+  const key = cycleIndex < BACKGROUND_KEYS.length
+    ? BACKGROUND_KEYS[cycleIndex]
+    : BACKGROUND_KEYS[Math.floor(Math.random() * BACKGROUND_KEYS.length)];
   return images[key];
 }
 

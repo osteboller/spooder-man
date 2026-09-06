@@ -16,6 +16,7 @@ export const ASSET_MANIFEST = {
     bgNight1: 'assets/backgrounds/bg_night1.png',
     bgNight2: 'assets/backgrounds/bg_night2.png',
     bgDay1: 'assets/backgrounds/bg_day1.png',
+    bgEvening1: 'assets/backgrounds/bg_evening1.png',
   }
 };
 

@@ -1,4 +1,4 @@
-import { createCamera, toScreen } from './camera.js';
+import { createCamera, toScreen, toWorld } from './camera.js';
 import { GRAVITY, simulateTrajectory, dist } from './physics.js';
 import { generateLevel, remainingNodes, nearestRemaining, generateEnemies } from './level.js';
 import {
@@ -52,6 +52,10 @@ const ROPE_DOT_SPACING_PX = 11;      // spacing between rope dots at zoom 1
 // reads as coming from around their hand, not from inside their body,
 // regardless of zoom. Tune this once you can see it against the real art.
 const ROPE_HIDE_NEAR_PLAYER_FRACTION = 0.35;
+const CHARGE_TEXT_DELAY_MS = 300; // how long you have to actually be charging before the "CHARGING" callout appears
+const FLOAT_TEXT_MS = 900;        // lifetime of a floating callout (CHARGING / ATTACK / WEB-SWIPE)
+const FLOAT_TEXT_RISE = 70;       // world units it drifts upward over that lifetime
+const CHARGE_TEXT_Y_OFFSET = 110; // world units above the grip the CHARGING callout spawns, to clear the player sprite
 
 export function createGame(canvas, images){
   const ctx = canvas.getContext('2d');
@@ -65,6 +69,10 @@ export function createGame(canvas, images){
   let downState = null; // state captured at press-time, so handleUp knows what gesture it's closing out
   let swingSlot = 1; // alternates 1/2 on every rope cast, so the pose alternates like hand-over-hand
   let ghostRopes = []; // fading afterimages of ropes just let go — world-space endpoints + when they were released
+  let floatingTexts = []; // {text, x, y, startTime} — CHARGING / ATTACK / WEB-SWIPE callouts
+  let bgCycleIndex = 0; // advances once per resetGame() call, i.e. per course — see pickBackground
+  let chargeStartMs = 0;
+  let chargeTextShown = false; // one callout per charge, not one per frame past the delay
   let angleAccum = 0;
   let powerAccum = 0; // independent of angleAccum, so holding can speed this up without spinning the aim faster
   let spinDir = 1;
@@ -87,6 +95,18 @@ export function createGame(canvas, images){
 
   function currentNode(){ return nodes[currentIndex]; }
 
+  // World-space floating callouts (CHARGING / ATTACK / WEB-SWIPE) — pure
+  // juice, no gameplay effect. spawn/update/draw follow the same
+  // world-coords-plus-startTime pattern as ghostRopes.
+  function spawnFloatingText(text, wx, wy){
+    floatingTexts.push({ text, x: wx, y: wy, startTime: performance.now() });
+  }
+
+  function updateFloatingTexts(){
+    const now = performance.now();
+    floatingTexts = floatingTexts.filter(t => now - t.startTime < FLOAT_TEXT_MS);
+  }
+
   function resetGame(ui){
     nodes = generateLevel();
     currentIndex = 0;
@@ -104,7 +124,11 @@ export function createGame(canvas, images){
     spinDir = 1;
     lastFrameTime = performance.now();
     resetPlayerAnimator(anim);
-    bgImage = pickBackground(images);
+    // One resetGame() call = one course, so this advances on level-complete
+    // and game-over (both route back through here) but not on a mid-course
+    // respawn — see pickBackground for the fixed-order-then-random sequence.
+    bgImage = pickBackground(images, bgCycleIndex);
+    bgCycleIndex++;
     enemies = generateEnemies(nodes);
     elapsedMs = 0;
     points = 0;
@@ -113,6 +137,8 @@ export function createGame(canvas, images){
     freezeMs = 0;
     deathHoldMs = 0;
     ghostRopes = [];
+    floatingTexts = [];
+    chargeTextShown = false;
 
     ui.setPoints(0);
     ui.setTime(0);
@@ -127,6 +153,8 @@ export function createGame(canvas, images){
   function startCharge(){
     if(state !== 'idle') return;
     state = 'charging';
+    chargeStartMs = performance.now();
+    chargeTextShown = false;
     playPlayerAnim(anim, 'windup');
   }
 
@@ -213,6 +241,7 @@ export function createGame(canvas, images){
     state = 'swinging';
     swingSlot = swingSlot === 1 ? 2 : 1;
     playPlayerAnim(anim, 'ropeSwing' + swingSlot);
+    spawnFloatingText('WEB-SWIPE', flight.x, flight.y);
     return true;
   }
 
@@ -249,7 +278,7 @@ export function createGame(canvas, images){
   }
 
   function tryDefeatEnemies(){
-    if(!flight) return;
+    if(!flight) return false;
     let defeatedAny = false;
     for(const e of enemies){
       if(e.resolved) continue;
@@ -263,6 +292,7 @@ export function createGame(canvas, images){
       playPlayerAnim(anim, 'attack');
       freezeMs = DEFEAT_FREEZE_MS; // a short punch-through freeze to sell the hit
     }
+    return defeatedAny;
   }
 
   // Shared by a real landing and a post-stumble respawn: back to a standing
@@ -375,6 +405,7 @@ export function createGame(canvas, images){
     }
 
     updateGhostRopes();
+    updateFloatingTexts();
 
     if(state === 'idle' || state === 'charging'){
       // Aim always spins at its normal, level-dependent rate — holding must
@@ -397,6 +428,12 @@ export function createGame(canvas, images){
       }
 
       anim.facingLeft = Math.cos(currentAngle) < 0;
+
+      if(state === 'charging' && !chargeTextShown && now - chargeStartMs >= CHARGE_TEXT_DELAY_MS){
+        chargeTextShown = true;
+        const cn = currentNode();
+        spawnFloatingText('CHARGING', cn.x, cn.y - CHARGE_TEXT_Y_OFFSET);
+      }
     }
 
     updatePlayerAnimation(anim, images, dt);
@@ -804,6 +841,26 @@ export function createGame(canvas, images){
     drawPowerPips();
   }
 
+  function drawFloatingTexts(){
+    if(!floatingTexts.length) return;
+    const now = performance.now();
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 22px Arial';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#111';
+    ctx.fillStyle = '#fff';
+    for(const t of floatingTexts){
+      const p = (now - t.startTime) / FLOAT_TEXT_MS;
+      const { x, y } = toScreen(cam, W, H, t.x, t.y - p * FLOAT_TEXT_RISE);
+      ctx.globalAlpha = 1 - p;
+      ctx.strokeText(t.text, x, y);
+      ctx.fillText(t.text, x, y);
+    }
+    ctx.restore();
+  }
+
   function draw(){
     ctx.clearRect(0,0,W,H);
     drawBackground(ctx, bgImage, cam, W, H);
@@ -837,6 +894,8 @@ export function createGame(canvas, images){
       const { x, y } = toScreen(cam, W, H, cn.x, cn.y);
       drawPlayer(ctx, images, anim, x, y, cam.zoom);
     }
+
+    drawFloatingTexts();
   }
 
   function loop(ui){
@@ -850,14 +909,21 @@ export function createGame(canvas, images){
       resetGame(ui);
       loop(ui);
     },
-    handleDown(ui){
+    handleDown(ui, pos){
       downState = state; // handleUp needs to know what this gesture started on, in case it changes below
       if(state === 'dead'){ (lives > 0 ? respawnAtCheckpoint : resetGame)(ui); return; }
       if(state === 'won'){ resetGame(ui); return; }
       // Pressing while swinging does NOT let go — it only arms the drag, so
       // you can aim the next rope before committing. The actual swap (or a
       // plain let-go, if the drag turns out too short) happens on release.
-      if(state === 'flying'){ tryDefeatEnemies(); return; }
+      if(state === 'flying'){
+        // pos is null for keyboard input — no click point to float the text from.
+        if(tryDefeatEnemies() && pos){
+          const w = toWorld(cam, W, H, pos.x, pos.y);
+          spawnFloatingText('ATTACK', w.x, w.y);
+        }
+        return;
+      }
       startCharge(); // no-ops unless state is 'idle' — including while swinging
     },
     handleUp(ui, dragDelta){

@@ -1,9 +1,10 @@
 // One button, several ways to press it. Everything funnels into onDown/onUp
 // so game.js doesn't need to know or care whether it was a tap, a click, or
-// the space bar. onUp also reports how far the pointer dragged between press
-// and release (in canvas-internal pixels, not raw CSS pixels — the canvas is
-// CSS-scaled to fit the viewport, so we correct for that via
-// getBoundingClientRect) — used for aiming the rope-swing anchor.
+// the space bar. onDown reports where the press landed (canvas-internal
+// pixels, not raw CSS pixels — the canvas is CSS-scaled to fit the viewport,
+// so we correct for that via getBoundingClientRect; null for keyboard, which
+// has no position). onUp reports how far the pointer dragged between press
+// and release, in the same coordinate space — used for aiming the rope-swing anchor.
 export function bindInput(canvas, { onDown, onUp }){
   let downX = 0, downY = 0;
 
@@ -22,7 +23,7 @@ export function bindInput(canvas, { onDown, onUp }){
     const p = canvasPoint(e);
     downX = p ? p.x : 0;
     downY = p ? p.y : 0;
-    onDown();
+    onDown(p); // null for keyboard — no position to report
   };
   const up = (e) => {
     e.preventDefault();

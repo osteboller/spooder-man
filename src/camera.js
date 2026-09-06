@@ -13,3 +13,12 @@ export function toScreen(cam, canvasW, canvasH, wx, wy){
     y: (wy - cam.y) * cam.zoom + canvasH / 2
   };
 }
+
+// Inverse of toScreen — for turning a raw pointer position (a click, say)
+// back into a world-space point that stays put as the camera moves.
+export function toWorld(cam, canvasW, canvasH, sx, sy){
+  return {
+    x: (sx - canvasW * ANCHOR_X) / cam.zoom + cam.x,
+    y: (sy - canvasH / 2) / cam.zoom + cam.y
+  };
+}
