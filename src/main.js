@@ -72,16 +72,21 @@ function bindToolbar(getGame){
 
 // Resolves on the first genuine user gesture anywhere on the page. Mobile
 // (and most desktop) browsers refuse to start an AudioContext until one of
-// these fires, so this is the one deterministic place bgm playback is
-// allowed to start from — everything before it can decode audio, but must
-// never call startBgm().
-function waitForGesture(){
+// these fires — and critically, they gate on the call happening
+// *synchronously* inside the real event handler, not merely "soon after" it.
+// Awaiting this promise and calling startBgm() in the continuation adds a
+// microtask hop past the handler, which browsers intermittently (not
+// always) no longer count as the gesture — exactly the "worked a couple
+// times, then didn't" flakiness this was seen to produce. So the caller
+// passes the actual startBgm() call in as `onGestureSync`, run synchronously
+// from inside the listener itself, before this promise ever resolves.
+function waitForGesture(onGestureSync){
   return new Promise(resolve => {
     // preventDefault on the touchstart matters here, not just style: without
     // it the browser follows up with a synthetic mousedown/click at the same
     // coordinates ~300ms later, which would land on whatever canvas listener
     // (runCredits, right after this) is attached by then and skip it unseen.
-    function onGesture(e){ e.preventDefault(); detach(); resolve(); }
+    function onGesture(e){ e.preventDefault(); detach(); onGestureSync(); resolve(); }
     function attach(){
       window.addEventListener('mousedown', onGesture, { once: true });
       window.addEventListener('touchstart', onGesture, { once: true, passive: false });
@@ -124,8 +129,7 @@ async function boot(){
   loadingBarEl.style.display = 'none';
   loadingLabelEl.textContent = 'TAP TO CONTINUE';
   loadingLabelEl.classList.add('blink');
-  await waitForGesture();
-  startBgm('intro');
+  await waitForGesture(() => startBgm('intro'));
   loadingEl.style.display = 'none';
 
   game = createGame(canvas, images);

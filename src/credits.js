@@ -1,9 +1,9 @@
 // SNES-style developer/publisher credit cards, shown once between the
-// loading gate and the title screen. Each card fades in, holds, fades out
-// on a plain white card (both source images are full-bleed white, not
-// transparent) — a tap/click/key doesn't skip the whole sequence outright,
-// it jumps to the next fade boundary, so mashing through still reads as
-// "fade in, fade out" for each card, just fast.
+// loading gate and the title screen. Each card fades in from black, holds,
+// fades back to black — the classic console-boot look, regardless of the
+// card art's own (white) background — a tap/click/key doesn't skip the
+// whole sequence outright, it jumps to the next fade boundary, so mashing
+// through still reads as "fade in, fade out" for each card, just fast.
 const FADE_MS = 500;
 const HOLD_MS = 1400;
 const CARD_MS = FADE_MS + HOLD_MS + FADE_MS;
