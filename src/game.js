@@ -449,6 +449,13 @@ export function createGame(canvas, images){
             // opposite hand) should alternate here too.
             swingSlot = swingSlot === 1 ? 2 : 1;
             flight.turnPeakAngle = flight.swingPrevAbsAngle; // the crest this turn plays back from
+            // Re-anchor the phase reference to THIS leg's own crest (signed,
+            // same side as the current — still-just-past-peak — angle).
+            // Leaving the original cast angle in place made every other leg
+            // play its frames backwards: the leg's sign flips each reversal,
+            // but the un-updated reference didn't, so (ref - angle)/(2*ref)
+            // counted up on odd legs and down on even ones.
+            flight.castAngle = flight.swingPrevAbsAngle * (angle < 0 ? -1 : 1);
             playPlayerAnim(anim, 'swingTurn');
           }
         } else if(!flight.swingGrowing && absAngle > flight.swingPrevAbsAngle){
