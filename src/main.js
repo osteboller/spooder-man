@@ -20,7 +20,7 @@ async function boot(){
       if(!bgmStarted){ bgmStarted = true; startBgm(); } // first tap/click/key — the only place autoplay is allowed
       game.handleDown(ui);
     },
-    onUp: () => game.handleUp(ui)
+    onUp: (dragDelta) => game.handleUp(ui, dragDelta)
   });
 
   game.start(ui);

@@ -3,7 +3,8 @@ import { GRAVITY, simulateTrajectory, dist } from './physics.js';
 import { generateLevel, remainingNodes, nearestRemaining, generateEnemies } from './level.js';
 import {
   createPlayerAnimator, resetPlayerAnimator,
-  updatePlayerAnimation, drawPlayer, playPlayerAnim, playerAnimFinished
+  updatePlayerAnimation, drawPlayer, playPlayerAnim, playerAnimFinished, setPlayerSwingFrame,
+  PLAYER_DISPLAY_SIZE
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
 import { updateEnemy, drawEnemy, ENEMY_WARN_MARGIN } from './enemy.js';
@@ -14,13 +15,30 @@ const ROT_PERIODS = [1800, 1600, 1400]; // ms per full rotation, per power level
 const SPEEDS = [16, 22, 30];             // power level 1,2,3
 const PLAYER_R = 14;
 const MAX_FLIGHT_FRAMES = 420;
-const ZOOM_TARGETS = { idle: 0.8, charging: 0.68, flying: 0.6, dead: 1.3, won: 0.8 };
+const AIRBORNE_ZOOM = 0.6; // shared by 'flying' and 'swinging' so transitions between them never pop the zoom lerp
+const ZOOM_TARGETS = { idle: 0.8, charging: 0.68, flying: AIRBORNE_ZOOM, swinging: AIRBORNE_ZOOM, dead: 1.3, won: 0.8 };
 const ROTATIONS_PER_LEVEL = 2; // full aim-rotations needed to auto-bump power up one notch
 const CHARGE_HOLD_MULTIPLIER = 2; // holding the button spins the aim (and charges power) this much faster
 const MAX_LIVES = 3;
 const HIT_FREEZE_MS = 120;    // brief hitstop when the player takes a hit or fails a jump
 const DEFEAT_FREEZE_MS = 90;  // shorter punch-through freeze for landing a hit on an enemy
 const DEATH_HOLD_MS = 550;    // camera stays punched in on the frozen hurt pose this long before letting go
+const MIN_DRAG_PX = 24;       // shorter drags on release are treated as accidental, no rope fires
+const ANCHOR_MARGIN_PX = 48;  // screen px the anchor sits above the visible top edge — guarantees it's always off-screen
+const ROPE_RELEASE_HOP = 4;   // small upward kick on dismounting a rope (not on a rope-to-rope swap) — reads as a little jump off the swing
+const ROPE_CATCH_SPEED_KEEP = 1; // fraction of your speed a new rope keeps when it catches you: 1 = chaining ropes costs nothing, lower = each catch bleeds some speed
+const LAND_FORGIVENESS = 6;   // world units of extra landing leniency on top of the node/player radii
+const SWING_CAST_ANGLE = 45 * Math.PI / 180; // fixed angle (from straight down) the rope always attaches at — only left/right depends on the drag, not distance. Also ropeSwing1/2's frame-0 pose.
+const SWING_TURN_MIN_ANGLE = 6 * Math.PI / 180; // reversals smaller than this are ignored as noise — no turn flourish for tiny wobbles
+const SWING_TURN_BASE_MS = 260; // total turn-flourish duration for a peak at SWING_CAST_ANGLE — smaller peaks (a dying swing) scale this up, wider ones scale it down
+const ROPE_FADE_MS = 1400;      // how long a released rope lingers as a fading afterimage
+const ROPE_DOT_SPACING_PX = 11;      // spacing between rope dots at zoom 1
+// Fraction of the player's own on-screen size (PLAYER_DISPLAY_SIZE * zoom)
+// hidden nearest them, on both the live rope and its afterimage — tied to
+// the sprite's actual rendered size (not a flat pixel count) so the rope
+// reads as coming from around their hand, not from inside their body,
+// regardless of zoom. Tune this once you can see it against the real art.
+const ROPE_HIDE_NEAR_PLAYER_FRACTION = 0.35;
 
 export function createGame(canvas, images){
   const ctx = canvas.getContext('2d');
@@ -30,7 +48,10 @@ export function createGame(canvas, images){
 
   let nodes = [];
   let currentIndex = 0;
-  let state = 'idle'; // idle -> charging -> flying -> dead -> won
+  let state = 'idle'; // idle -> charging -> flying <-> swinging -> dead -> won
+  let downState = null; // state captured at press-time, so handleUp knows what gesture it's closing out
+  let swingSlot = 1; // alternates 1/2 on every rope cast, so the pose alternates like hand-over-hand
+  let ghostRopes = []; // fading afterimages of ropes just let go — world-space endpoints + when they were released
   let angleAccum = 0;
   let powerAccum = 0; // independent of angleAccum, so holding can speed this up without spinning the aim faster
   let spinDir = 1;
@@ -78,6 +99,7 @@ export function createGame(canvas, images){
     lives = MAX_LIVES;
     freezeMs = 0;
     deathHoldMs = 0;
+    ghostRopes = [];
 
     ui.setTotal(nodes.length - 1);
     ui.setGrabs(0);
@@ -110,6 +132,106 @@ export function createGame(canvas, images){
     flightFrames = 0;
     state = 'flying';
     playSfx('launch');
+  }
+
+  // Fires the rope off a press-drag-release gesture made while airborne. The
+  // anchor is a purely virtual point that must NEVER be visible: its height
+  // is always pinned just above the current viewport's top edge (regardless
+  // of drag length), and it always sits at a fixed SWING_CAST_ANGLE from
+  // straight-down — only the drag's left/right side chooses which way it
+  // leans, not how far you dragged (that only has to clear MIN_DRAG_PX to
+  // count as an intentional cast at all). Aiming mirrors the drag ("pull to
+  // launch", like a slingshot) — dragging down-and-right sends the rope up-and-left.
+  function maybeCastRope(dragDelta){
+    // state can change out from under a held-down gesture — the physics loop
+    // keeps running between this press and its matching release, and can
+    // land, time out, or kill the player while the finger/mouse is still
+    // down. Casting must check the CURRENT state, not just that a stale
+    // `flight` object still exists, or a death mid-hold can be "undone" by
+    // a rope cast that fires on release.
+    if(state !== 'flying' || !flight) return false;
+    const dragMag = Math.hypot(dragDelta.dx, dragDelta.dy);
+    if(dragMag < MIN_DRAG_PX) return false;
+    const pullX = -dragDelta.dx; // mirrored: the rope goes opposite the drag
+    const side = Math.sign(pullX) || 1; // a straight-up drag has no side — default right
+    // Anchored off the player's own position and the zoom flight/swinging
+    // always settles at — NOT cam.y/cam.zoom, which lag behind via their own
+    // lerp. Using the live camera state here meant a rope cast while the
+    // camera hadn't caught up (e.g. right after swinging upward fast) got a
+    // shorter, too-close anchor than one cast a moment later — inconsistent
+    // reach that read as random braking when chaining ropes mid-swing.
+    const anchorY = flight.y - (H / 2 + ANCHOR_MARGIN_PX) / AIRBORNE_ZOOM;
+    const vertDist = flight.y - anchorY; // > 0, anchor is always above
+    const anchorX = flight.x + side * vertDist * Math.tan(SWING_CAST_ANGLE);
+    flight.anchor = { x: anchorX, y: anchorY };
+    flight.ropeLength = dist(flight.x, flight.y, anchorX, anchorY);
+    // The cast position IS the starting extreme of this swing (like a
+    // pendulum released from rest at its peak) — so the very first motion is
+    // always inward, never a "reversal." Recording the actual signed angle
+    // (not just assuming exactly SWING_CAST_ANGLE) keeps this robust even if
+    // side/geometry ever changes.
+    flight.castAngle = Math.atan2(flight.x - anchorX, flight.y - anchorY);
+    flight.swingPrevAbsAngle = Math.abs(flight.castAngle);
+    flight.swingGrowing = false;
+
+    // The rope "catches" you smoothly instead of jerking: whatever speed you
+    // arrive with is redirected to run purely along the new rope's arc,
+    // keeping its full magnitude. Without this, momentum you built on the old
+    // rope points partly straight at the new anchor, so the rope hangs slack,
+    // you drop, and it snaps tight — the lurch that made chaining ropes
+    // mid-swing slower than letting go and re-casting.
+    //
+    // The arc direction is chosen by where you AIMED, not by where you were
+    // already heading: it's a grapple gun, so firing up-and-right swings you
+    // right, even if you were drifting left. That also keeps the swing always
+    // starting at its outer extreme and sweeping inward, which is what the
+    // ropeSwing1/2 frames depict in order.
+    const speed = Math.hypot(flight.vx, flight.vy) * ROPE_CATCH_SPEED_KEEP;
+    if(speed > 0 && flight.ropeLength > 0){
+      const nx = (flight.x - anchorX) / flight.ropeLength; // anchor -> player
+      const ny = (flight.y - anchorY) / flight.ropeLength;
+      let tx = -ny, ty = nx;                               // perpendicular to the rope
+      if(tx * side < 0){ tx = -tx; ty = -ty; }             // swing toward the side you fired at
+      flight.vx = tx * speed;
+      flight.vy = ty * speed;
+    }
+
+    state = 'swinging';
+    swingSlot = swingSlot === 1 ? 2 : 1;
+    playPlayerAnim(anim, 'ropeSwing' + swingSlot);
+    return true;
+  }
+
+  // Letting go mid-swing: keep whatever momentum the swing built up and drop
+  // back into normal projectile physics. The little upward kick is for
+  // actually dismounting — a rope-to-rope handoff passes hop:false, since
+  // being nudged upward mid-handoff just fights the swing you're continuing.
+  function releaseRope({ hop = true } = {}){
+    // The rope doesn't just vanish — its free end keeps swinging on the same
+    // anchor under its own momentum (a tiny independent pendulum sim, see
+    // updateGhostRopes) while it fades out, instead of freezing in place.
+    ghostRopes.push({
+      x: flight.x, y: flight.y, vx: flight.vx, vy: flight.vy,
+      anchorX: flight.anchor.x, anchorY: flight.anchor.y, ropeLength: flight.ropeLength,
+      startTime: performance.now()
+    });
+    flight.anchor = null;
+    flight.ropeLength = null;
+    if(hop) flight.vy -= ROPE_RELEASE_HOP; // a little jump off the swing, on top of whatever momentum it built up
+    flightFrames = 0; // fresh timeout budget for this new free-flight segment — don't inherit stale pre-swing time
+    state = 'flying';
+    playPlayerAnim(anim, 'swingStop');
+  }
+
+  // The release-gesture's drag can aim a NEW rope before the old one lets
+  // go — so swapping is one motion: let go of the current rope, then
+  // immediately try to catch the next one with the same drag.
+  function swapRope(dragDelta){
+    if(state !== 'swinging') return; // may have died/landed mid-hold — nothing to swap
+    releaseRope({ hop: false });
+    // Drag too short to catch anything? Then it was a plain dismount after
+    // all, so it earns the dismount hop the release skipped.
+    if(!maybeCastRope(dragDelta)) flight.vy -= ROPE_RELEASE_HOP;
   }
 
   function tryDefeatEnemies(){
@@ -197,14 +319,22 @@ export function createGame(canvas, images){
   }
 
   function loseLife(ui){
-    lives--;
+    lives = Math.max(0, lives - 1);
     ui.setLives(lives, MAX_LIVES);
   }
 
   function landFail(ui){
+    if(state === 'dead') return; // already handled — never let a fail fire twice on one flight
     state = 'dead';
+    flight.anchor = null;
+    flight.ropeLength = null;
     deathHoldMs = DEATH_HOLD_MS;
-    triggerHurt();
+    // Unconditional, unlike triggerHurt() — a fail always deserves its own
+    // fresh pause/pose, even if the player was already mid-hurt-pose from an
+    // earlier non-fatal hit this same flight (triggerHurt() would otherwise
+    // silently skip both, making this fail land with zero warning).
+    playPlayerAnim(anim, 'hurt');
+    freezeMs = HIT_FREEZE_MS;
     playSfx('fail');
     if(!flight.lifeSpent) loseLife(ui); // a hit already charged this same flight a life
 
@@ -231,6 +361,8 @@ export function createGame(canvas, images){
     for(const e of enemies){
       if(!e.resolved) updateEnemy(e, dt, elapsedMs);
     }
+
+    updateGhostRopes();
 
     if(state === 'idle' || state === 'charging'){
       // Aim always spins at its normal, level-dependent rate — holding must
@@ -259,12 +391,96 @@ export function createGame(canvas, images){
     if(state === 'flying' && anim.current === 'attack' && playerAnimFinished(anim)){
       playPlayerAnim(anim, 'roll');
     }
+    // swingStop is non-looping — once it finishes it just holds its last
+    // frame for the rest of the free-fall, same as grab/hurt elsewhere. No
+    // forced switch to 'roll' (that's the ground-hop's flight pose, and
+    // popping into it right after letting go of a rope looked like a
+    // mismatched second animation tacked on).
 
-    if(state === 'flying'){
+    if(state === 'flying' || state === 'swinging'){
       flight.vy += GRAVITY;
       flight.x += flight.vx;
       flight.y += flight.vy;
-      flightFrames++;
+      // The timeout clock only runs during free flight — swinging is
+      // self-limiting (you choose when to let go), so it shouldn't also be
+      // racing against a clock that was tuned for an untethered arc.
+      if(state === 'flying') flightFrames++;
+
+      if(state === 'swinging'){
+        // Frozen during the turn flourish (see below) — right at the peak of
+        // a swing, vx is near zero and noisy, so continuously reading it
+        // here would make the turn pose flicker between facings.
+        if(anim.current !== 'swingTurn') anim.facingLeft = flight.vx < 0;
+        // Inextensible-rope clamp: let the player move freely (rope can go
+        // slack), but once they'd fly past the rope's length, pin them back
+        // onto the circle and strip the outward-radial component of
+        // velocity so only the tangential part survives — the rope "catches".
+        const dx = flight.x - flight.anchor.x, dy = flight.y - flight.anchor.y;
+        const d = Math.hypot(dx, dy);
+        if(d > flight.ropeLength){
+          const nx = dx / d, ny = dy / d;
+          flight.x = flight.anchor.x + nx * flight.ropeLength;
+          flight.y = flight.anchor.y + ny * flight.ropeLength;
+          const vRad = flight.vx * nx + flight.vy * ny;
+          if(vRad > 0){
+            flight.vx -= vRad * nx;
+            flight.vy -= vRad * ny;
+          }
+        }
+
+        // Drive the swing pose from the actual rope angle, not from a timer —
+        // a wide arc plays faster and reaches more extreme frames than a
+        // gentle one, for free, since both are just reading the same angle.
+        const angle = Math.atan2(flight.x - flight.anchor.x, flight.y - flight.anchor.y);
+        const absAngle = Math.abs(angle);
+
+        if(flight.swingGrowing && absAngle < flight.swingPrevAbsAngle){
+          flight.swingGrowing = false;
+          // The `anim.current` guard covers the peak's jitter: near-zero
+          // angular velocity can flicker growing/shrinking a few times in a
+          // row, and this keeps those from restarting the turn.
+          if(flight.swingPrevAbsAngle > SWING_TURN_MIN_ANGLE && anim.current !== 'swingTurn'){
+            // Face whichever side of the anchor the peak was on — freezes
+            // here rather than tracking noisy near-zero velocity for the
+            // duration of the pose. Flip the comparison if it looks backwards.
+            anim.facingLeft = angle < 0;
+            // Same hand-swap as a fresh cast — you're gripping the same rope
+            // but reaching across as you reverse, so swing1/2 (rope in the
+            // opposite hand) should alternate here too.
+            swingSlot = swingSlot === 1 ? 2 : 1;
+            // Total turn duration scales with how hard gravity pulls you back
+            // off this peak (∝ sin(peak)) rather than with live angle — a
+            // small, dying swing accelerates away from its peak gently and
+            // gets a long, slow turn; a wide swing snaps back hard and gets a
+            // quick one. Crucially this is decided ONCE, here, so the 3
+            // frames land at even time intervals — driving progress from the
+            // live angle instead made frame 0 (near-zero velocity right at
+            // the peak) linger, then crammed the rest into whatever time was left.
+            const refSin = Math.max(0.0001, Math.sin(flight.swingPrevAbsAngle));
+            flight.turnDurationMs = SWING_TURN_BASE_MS * Math.sin(SWING_CAST_ANGLE) / refSin;
+            flight.turnStartMs = now;
+            playPlayerAnim(anim, 'swingTurn');
+          }
+        } else if(!flight.swingGrowing && absAngle > flight.swingPrevAbsAngle){
+          flight.swingGrowing = true;
+        }
+        flight.swingPrevAbsAngle = absAngle;
+
+        if(anim.current === 'swingTurn'){
+          const progress = (now - flight.turnStartMs) / flight.turnDurationMs;
+          if(progress >= 1) playPlayerAnim(anim, 'ropeSwing' + swingSlot);
+          else setPlayerSwingFrame(anim, images, progress);
+        }
+        if(anim.current === 'ropeSwing1' || anim.current === 'ropeSwing2'){
+          // Signed, not absolute — frame 0 is the cast pose (at +/-castAngle),
+          // the last frame is the mirror position on the far side, and the
+          // frame moves monotonically as the rope sweeps between them. Using
+          // |angle| here instead would make the frame index go down then back
+          // up as you pass through vertical, looking like it plays out of order.
+          const phase = (flight.castAngle - angle) / (2 * flight.castAngle);
+          setPlayerSwingFrame(anim, images, phase);
+        }
+      }
 
       if(!flight.doomed){
         for(const e of enemies){
@@ -294,20 +510,22 @@ export function createGame(canvas, images){
         }
       }
 
-      if(state === 'flying'){ // a fatal hit just above may have already ended this
+      if(state === 'flying' || state === 'swinging'){ // a fatal hit just above may have already ended this
         // Landing stays possible even after a hit (flight.doomed) — knocked
         // off course and slowed down, but still lucky enough to catch a node.
         let landed = false;
         for(let i = 0; i < nodes.length; i++){
           const n = nodes[i];
           if(i === flight.originIndex && flightFrames < 8) continue;
-          if(dist(flight.x, flight.y, n.x, n.y) <= n.r + PLAYER_R * 0.6){
+          if(dist(flight.x, flight.y, n.x, n.y) <= n.r + PLAYER_R * 0.6 + LAND_FORGIVENESS){
             landSuccess(n, ui);
             landed = true;
             break;
           }
         }
-        if(!landed){
+        // Timeout/floor death only apply to free flight — while attached to
+        // the rope you're always recoverable by just letting go.
+        if(!landed && state === 'flying'){
           if(flightFrames > MAX_FLIGHT_FRAMES){
             landFail(ui);
           } else {
@@ -329,7 +547,7 @@ export function createGame(canvas, images){
     }
 
     let focusX, focusY;
-    if(state === 'flying'){
+    if(state === 'flying' || state === 'swinging'){
       focusX = flight.x; focusY = flight.y;
     } else if(state === 'dead'){
       if(deathHoldMs > 0 && flight){
@@ -353,7 +571,7 @@ export function createGame(canvas, images){
     } else {
       focusX = currentNode().x; focusY = currentNode().y;
     }
-    const lerp = state === 'flying' ? 0.18 : 0.14;
+    const lerp = (state === 'flying' || state === 'swinging') ? 0.18 : 0.14;
     cam.x += (focusX - cam.x) * lerp;
     cam.y += (focusY - cam.y) * lerp;
 
@@ -391,7 +609,7 @@ export function createGame(canvas, images){
   }
 
   function drawCompass(){
-    if(state === 'flying' || state === 'won') return;
+    if(state === 'flying' || state === 'swinging' || state === 'won') return;
     const cn = currentNode();
     const near = nearestRemaining(nodes, cn);
     if(!near) return;
@@ -453,6 +671,75 @@ export function createGame(canvas, images){
     }
   }
 
+  // The anchor itself is never drawn — only the rope, stepped in fixed dots
+  // (rather than a smooth stroke) for a pixel-art look. The dots closest to
+  // the player are skipped entirely, out to a fraction of the player's own
+  // rendered size, so the rope reads as coming from their hand rather than
+  // piercing through the middle of the sprite. Shared by the live rope and
+  // its fading afterimages.
+  function drawRopeSegment(a, b, alpha){
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    const step = ROPE_DOT_SPACING_PX * cam.zoom;
+    const count = Math.max(1, Math.round(len / step));
+    const hideNear = PLAYER_DISPLAY_SIZE * ROPE_HIDE_NEAR_PLAYER_FRACTION * cam.zoom;
+    const hideCount = Math.ceil(hideNear / step);
+    if(hideCount >= count) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff';
+    // i < count, not <=: i === count lands exactly on the anchor (t === 1),
+    // which must never get a dot — the anchor itself is never allowed to be visible.
+    for(let i = hideCount; i < count; i++){
+      const t = i / count;
+      const x = Math.round(a.x + dx * t);
+      const y = Math.round(a.y + dy * t);
+      ctx.fillRect(x - 2, y - 2, 4, 4);
+    }
+    ctx.restore();
+  }
+
+  // A released rope's free end keeps swinging on the same anchor under its
+  // own momentum — a tiny standalone pendulum sim, same math as the live
+  // rope's clamp — instead of freezing in place, right up until it fades out.
+  function updateGhostRopes(){
+    const now = performance.now();
+    ghostRopes = ghostRopes.filter(g => now - g.startTime < ROPE_FADE_MS);
+    for(const g of ghostRopes){
+      g.vy += GRAVITY;
+      g.x += g.vx;
+      g.y += g.vy;
+      const dx = g.x - g.anchorX, dy = g.y - g.anchorY;
+      const d = Math.hypot(dx, dy);
+      if(d > g.ropeLength){
+        const nx = dx / d, ny = dy / d;
+        g.x = g.anchorX + nx * g.ropeLength;
+        g.y = g.anchorY + ny * g.ropeLength;
+        const vRad = g.vx * nx + g.vy * ny;
+        if(vRad > 0){
+          g.vx -= vRad * nx;
+          g.vy -= vRad * ny;
+        }
+      }
+    }
+  }
+
+  function drawRope(){
+    if(state !== 'swinging' || !flight || !flight.anchor) return;
+    const a = toScreen(cam, W, H, flight.x, flight.y);
+    const b = toScreen(cam, W, H, flight.anchor.x, flight.anchor.y);
+    drawRopeSegment(a, b, 1);
+  }
+
+  function drawGhostRopes(){
+    const now = performance.now();
+    for(const g of ghostRopes){
+      const a = toScreen(cam, W, H, g.x, g.y);
+      const b = toScreen(cam, W, H, g.anchorX, g.anchorY);
+      drawRopeSegment(a, b, 1 - (now - g.startTime) / ROPE_FADE_MS);
+    }
+  }
+
   function drawAimUI(){
     if(state !== 'idle' && state !== 'charging') return;
     const cn = currentNode();
@@ -494,8 +781,10 @@ export function createGame(canvas, images){
 
     drawCompass();
     drawAimUI();
+    drawGhostRopes();
+    drawRope();
 
-    if((state === 'flying' || state === 'dead') && flight){
+    if((state === 'flying' || state === 'swinging' || state === 'dead') && flight){
       const { x, y } = toScreen(cam, W, H, flight.x, flight.y);
       drawPlayer(ctx, images, anim, x, y, cam.zoom);
     } else if(state !== 'won'){
@@ -517,13 +806,19 @@ export function createGame(canvas, images){
       loop(ui);
     },
     handleDown(ui){
+      downState = state; // handleUp needs to know what this gesture started on, in case it changes below
       if(state === 'dead'){ (lives > 0 ? respawnAtCheckpoint : resetGame)(ui); return; }
       if(state === 'won'){ resetGame(ui); return; }
+      // Pressing while swinging does NOT let go — it only arms the drag, so
+      // you can aim the next rope before committing. The actual swap (or a
+      // plain let-go, if the drag turns out too short) happens on release.
       if(state === 'flying'){ tryDefeatEnemies(); return; }
-      startCharge();
+      startCharge(); // no-ops unless state is 'idle' — including while swinging
     },
-    handleUp(){
-      releaseCharge();
+    handleUp(ui, dragDelta){
+      releaseCharge(); // no-ops unless a ground charge is actually in progress
+      if(downState === 'flying') maybeCastRope(dragDelta);
+      else if(downState === 'swinging') swapRope(dragDelta);
     }
   };
 }

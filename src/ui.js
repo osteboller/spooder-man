@@ -15,7 +15,10 @@ export function createUI(){
     setTotal(n){ totalEl.textContent = String(n); },
     setGrabs(n){ grabsEl.textContent = String(n); },
     setPoints(n){ pointsEl.textContent = String(n); },
-    setLives(n, max){ livesEl.textContent = '❤'.repeat(n) + '🤍'.repeat(max - n); },
+    setLives(n, max){
+      const filled = Math.max(0, Math.min(max, n));
+      livesEl.textContent = '❤'.repeat(filled) + '🤍'.repeat(max - filled);
+    },
 
     setTime(ms){
       const text = formatTime(ms);

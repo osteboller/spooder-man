@@ -26,14 +26,19 @@ export function isFinished(anim){
   return anim.finished;
 }
 
+function frameCountOf(def, images){
+  const img = images[def.imgKey];
+  if(!img) return 1;
+  return Math.max(1, Math.round(img.width / img.height));
+}
+
 export function updateAnimator(anim, images, dt){
   const def = anim.defs[anim.current];
   if(!def || anim.finished) return;
   const img = images[def.imgKey];
   if(!img) return;
 
-  const frameSize = img.height;
-  const frameCount = Math.max(1, Math.round(img.width / frameSize));
+  const frameCount = frameCountOf(def, images);
 
   anim.frameTimer += dt;
   while(anim.frameTimer >= def.frameDuration){
@@ -65,4 +70,15 @@ export function drawAnimator(ctx, anim, images, screenX, screenY, zoom, displayS
   if(flip) ctx.scale(-1, 1);
   ctx.drawImage(img, anim.frameIndex * frameSize, 0, frameSize, frameSize, -dw / 2, -dh / 2, dw, dh);
   ctx.restore();
+}
+
+// Drives a clip's frame directly from an external 0..1 value instead of the
+// normal time-based playback — for an animation that should track a physical
+// quantity (like how far into a swing you are) rather than elapsed time.
+// The clip's own frameDuration/loop settings are ignored when driven this way.
+export function setFrameByPhase(anim, images, phase){
+  const def = anim.defs[anim.current];
+  if(!def) return;
+  const count = frameCountOf(def, images);
+  anim.frameIndex = Math.round(Math.max(0, Math.min(1, phase)) * (count - 1));
 }
