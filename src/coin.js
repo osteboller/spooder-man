@@ -5,7 +5,7 @@
 export const COIN_FRAME_W = 16, COIN_FRAME_H = 16;
 export const COIN_FRAME_COUNT = 4;
 export const COIN_FRAME_DURATION = 100; // ms per spin frame
-export const COIN_DISPLAY_SIZE = 40;    // drawn size at zoom 1
+export const COIN_DISPLAY_SIZE = 60;    // drawn size at zoom 1 (1.5x the sprite's native 40px feel)
 export const COIN_PICKUP_RADIUS = 40;   // world units — how close counts as touching it
 
 export function updateCoin(coin, dt){

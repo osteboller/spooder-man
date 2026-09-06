@@ -18,6 +18,9 @@ export const ASSET_MANIFEST = {
     bgNight2: 'assets/backgrounds/bg_night2.png',
     bgDay1: 'assets/backgrounds/bg_day1.png',
     bgEvening1: 'assets/backgrounds/bg_evening1.png',
+    titleBg: 'assets/startscreens/Titlescreen_bg.png',
+    titleLogo: 'assets/startscreens/Titlescreen_title.png',
+    titlePlayer: 'assets/startscreens/Titlescreen_player.png',
   }
 };
 
@@ -31,10 +34,18 @@ function loadImage(src){
 }
 
 // Loads every image in the manifest and returns { key: HTMLImageElement }.
-export async function loadAllImages(manifest = ASSET_MANIFEST){
+// onProgress(loaded, total), if given, fires after each image resolves — for
+// a loading bar on the first, slowest load (mobile browsers especially).
+export async function loadAllImages(manifest = ASSET_MANIFEST, onProgress){
   const entries = Object.entries(manifest.images);
+  let loaded = 0;
   const pairs = await Promise.all(
-    entries.map(async ([key, src]) => [key, await loadImage(src)])
+    entries.map(async ([key, src]) => {
+      const img = await loadImage(src);
+      loaded++;
+      if(onProgress) onProgress(loaded, entries.length);
+      return [key, img];
+    })
   );
   return Object.fromEntries(pairs);
 }

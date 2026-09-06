@@ -30,7 +30,7 @@ canvas{
 }
 #hud{
   position:absolute; top:18px; left:18px;
-  display:flex; flex-direction:column; align-items:flex-start;
+  display:none; flex-direction:column; align-items:flex-start;
   gap:8px;
   z-index:2;
 }
@@ -46,7 +46,7 @@ canvas{
 .chip-time{ background:var(--sky); transform:rotate(-1deg); }
 .chip-lives{ background:var(--red); color:var(--paper); transform:rotate(2deg); }
 #lives{ display:inline-flex; gap:4px; vertical-align:middle; }
-.life-icon{ width:24px; height:24px; image-rendering:pixelated; }
+.life-icon{ width:36px; height:36px; image-rendering:pixelated; }
 .life-icon-empty{ opacity:0.3; filter:grayscale(1); }
 #msg{
   position:absolute; bottom:24px; left:50%;
@@ -64,6 +64,27 @@ canvas{
 }
 #msg.win{ background:var(--green); }
 #msg.gameover{ background:#111; color:var(--red); border-color:var(--red); }
+#loading{
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  display:flex; flex-direction:column; align-items:center; gap:14px;
+  z-index:3;
+}
+.loading-label{
+  color:var(--paper);
+  font-size:22px;
+  letter-spacing:2px;
+  text-shadow:3px 3px 0 var(--ink);
+}
+.loading-bar{
+  width:220px; height:20px;
+  background:var(--ink);
+  border:3px solid var(--paper);
+}
+.loading-bar-fill{
+  height:100%; width:0%;
+  background:var(--green);
+  transition:width 0.15s ease-out;
+}
 #msg small{
   display:block;
   font-size:13px;
