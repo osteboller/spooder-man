@@ -15,9 +15,18 @@ const ROT_PERIODS = [1800, 1600, 1400]; // ms per full rotation, per power level
 const SPEEDS = [16, 22, 30];             // power level 1,2,3
 const PLAYER_R = 14;
 const MAX_FLIGHT_FRAMES = 420;
-const AIRBORNE_ZOOM = 0.6; // shared by 'flying' and 'swinging' so transitions between them never pop the zoom lerp
-const ZOOM_TARGETS = { idle: 0.8, charging: 0.68, flying: AIRBORNE_ZOOM, swinging: AIRBORNE_ZOOM, dead: 1.3, won: 0.8 };
+// Zoom is mostly computed rather than looked up: standing on a grip it pulls
+// out as your charge builds (you're about to cover more ground, so you get to
+// see more of it), and airborne it pulls out with your speed. Only the two
+// static states are table-driven.
+const ZOOM_TARGETS = { dead: 1.3, won: 0.8 };
+const ZOOM_IDLE = 0.8;        // on a grip, charge not started
+const ZOOM_CHARGED = 0.5;     // on a grip, fully charged
+const AIRBORNE_ZOOM = 0.6;    // airborne and barely moving
+const AIRBORNE_ZOOM_MIN = 0.5;// airborne at AIRBORNE_ZOOM_FULL_SPEED or above — also the clearance the rope anchor is placed against, so it stays off-screen at every airborne zoom
+const AIRBORNE_ZOOM_FULL_SPEED = 42; // px/frame at which the airborne view is all the way out
 const ROTATIONS_PER_LEVEL = 2; // full aim-rotations needed to auto-bump power up one notch
+const MAX_POWER_LEVEL = SPEEDS.length;
 const CHARGE_HOLD_MULTIPLIER = 2; // holding the button spins the aim (and charges power) this much faster
 const MAX_LIVES = 3;
 const HIT_FREEZE_MS = 120;    // brief hitstop when the player takes a hit or fails a jump
@@ -160,7 +169,10 @@ export function createGame(canvas, images){
     // camera hadn't caught up (e.g. right after swinging upward fast) got a
     // shorter, too-close anchor than one cast a moment later — inconsistent
     // reach that read as random braking when chaining ropes mid-swing.
-    const anchorY = flight.y - (H / 2 + ANCHOR_MARGIN_PX) / AIRBORNE_ZOOM;
+    // Cleared against the WIDEST airborne zoom, not the resting one — the
+    // view pulls out with speed, and an anchor placed for the narrow view
+    // would drift into frame the moment you got moving.
+    const anchorY = flight.y - (H / 2 + ANCHOR_MARGIN_PX) / AIRBORNE_ZOOM_MIN;
     const vertDist = flight.y - anchorY; // > 0, anchor is always above
     const anchorX = flight.x + side * vertDist * Math.tan(SWING_CAST_ANGLE);
     flight.anchor = { x: anchorX, y: anchorY };
@@ -376,7 +388,7 @@ export function createGame(canvas, images){
       const holdMultiplier = state === 'charging' ? CHARGE_HOLD_MULTIPLIER : 1;
       powerAccum += ((Math.PI * 2) / period) * holdMultiplier * dt;
       currentPowerProgress = (powerAccum / (Math.PI * 2)) / ROTATIONS_PER_LEVEL;
-      currentPowerLevel = Math.min(3, 1 + Math.floor(currentPowerProgress));
+      currentPowerLevel = Math.min(MAX_POWER_LEVEL, 1 + Math.floor(currentPowerProgress));
 
       if(currentPowerLevel > prevPowerLevel){
         powerPunch = { index: currentPowerLevel - 1, startTime: now };
@@ -593,7 +605,21 @@ export function createGame(canvas, images){
     cam.x += (focusX - cam.x) * lerp;
     cam.y += (focusY - cam.y) * lerp;
 
-    const zoomTarget = ZOOM_TARGETS[state] ?? 1.0;
+    let zoomTarget;
+    if(state === 'flying' || state === 'swinging'){
+      // Pulls out with speed, so a fast swing shows you where you're actually
+      // headed instead of a blur of nearby scenery.
+      const speed = Math.hypot(flight.vx, flight.vy);
+      const t = Math.min(1, speed / AIRBORNE_ZOOM_FULL_SPEED);
+      zoomTarget = AIRBORNE_ZOOM + (AIRBORNE_ZOOM_MIN - AIRBORNE_ZOOM) * t;
+    } else if(state === 'idle' || state === 'charging'){
+      // Pulls out as the charge builds — by full power you're about to cross
+      // a lot of ground, so you get to see enough of it to aim at.
+      const charge = Math.min(1, currentPowerProgress / (MAX_POWER_LEVEL - 1));
+      zoomTarget = ZOOM_IDLE + (ZOOM_CHARGED - ZOOM_IDLE) * charge;
+    } else {
+      zoomTarget = ZOOM_TARGETS[state] ?? 1.0;
+    }
     const zoomLerp = state === 'dead' ? 0.1 : 0.06;
     cam.zoom += (zoomTarget - cam.zoom) * zoomLerp;
   }
