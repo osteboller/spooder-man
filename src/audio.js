@@ -122,31 +122,62 @@ export function playSfx(name){
   }
 }
 
-// Background music. Decoding the file doesn't need a user gesture, so it's
+// Background music. Decoding a file doesn't need a user gesture, so it's
 // safe to kick off during boot — but actually starting playback does (every
 // mobile/desktop browser blocks audio until the first tap/click/keypress),
 // so startBgm() must only be called from inside a real input handler.
-const BGM_TRACK = 'assets/audio/bgm/Neon Hero Run.mp3';
+//
+// Two named tracks, switchable: 'intro' plays from the earliest gesture the
+// page gets (loading screen or title screen, whichever comes first — see
+// main.js), 'level' takes over the moment the first course actually starts.
+const BGM_TRACKS = {
+  intro: 'assets/audio/bgm/bgm_intro.mp3',
+  level: 'assets/audio/bgm/bgm_1.mp3',
+};
 
-let bgmBuffer = null;
-let bgmSource = null;
+const bgmBuffers = {}; // track name -> decoded AudioBuffer
+let bgmSource = null;  // the currently-playing source node, if any
 let bgmGain = null;
+let currentBgmName = null;
 
 export async function loadBgm(){
   const ctx = getCtx();
-  const res = await fetch(encodeURI(BGM_TRACK));
-  const data = await res.arrayBuffer();
-  bgmBuffer = await ctx.decodeAudioData(data);
+  const entries = Object.entries(BGM_TRACKS);
+  // allSettled, not all — one track failing to fetch/decode shouldn't cost
+  // us the other, and each gets its own console warning instead of a single
+  // opaque failure for "the music".
+  const results = await Promise.allSettled(entries.map(async ([name, src]) => {
+    const res = await fetch(encodeURI(src));
+    if(!res.ok) throw new Error(`HTTP ${res.status} for ${src}`);
+    const data = await res.arrayBuffer();
+    bgmBuffers[name] = await ctx.decodeAudioData(data);
+  }));
+  results.forEach((r, i) => {
+    if(r.status === 'rejected') console.warn(`Background music track "${entries[i][0]}" failed to load:`, r.reason);
+  });
 }
 
-export function startBgm(){
-  if(!bgmBuffer || bgmSource) return; // not loaded yet, or already playing
+function stopBgm(){
+  if(!bgmSource) return;
+  try{ bgmSource.stop(); } catch(e){ /* already stopped — fine */ }
+  bgmSource.disconnect();
+  bgmSource = null;
+}
+
+// name: 'intro' (default) or 'level'. Switching while something is already
+// playing stops it first; calling with the track that's already playing is
+// a harmless no-op.
+export function startBgm(name = 'intro'){
+  if(currentBgmName === name && bgmSource) return;
+  if(!bgmBuffers[name]) return; // not loaded (or failed) — silently do nothing rather than throw
+  stopBgm();
   const ctx = getCtx();
   bgmGain = ctx.createGain();
   bgmGain.gain.value = bgmVolume;
   bgmSource = ctx.createBufferSource();
-  bgmSource.buffer = bgmBuffer;
+  bgmSource.buffer = bgmBuffers[name];
   bgmSource.loop = true;
   bgmSource.connect(bgmGain).connect(ctx.destination);
   bgmSource.start(0);
+  currentBgmName = name;
 }

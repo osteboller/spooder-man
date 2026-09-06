@@ -46,10 +46,13 @@ function centeredScale(box, factor){
 }
 
 // Resolves once the player has actually chosen to start (not on the
-// skip-the-intro tap). onProceed fires exactly then — the right moment to
-// unlock/start audio, since it's a genuine user gesture and it's also when
-// gameplay actually begins.
-export function runTitleScreen(canvas, images, onProceed){
+// skip-the-intro tap) — the caller awaits this to know when to move on to
+// the actual game. Audio no longer hooks in here: the intro bgm starts on
+// the earliest gesture anywhere on the page (main.js), which can happen
+// before this even exists (during the loading screen), and the level bgm
+// starts alongside game.start() — this function doesn't need to know about
+// either.
+export function runTitleScreen(canvas, images){
   return new Promise(resolve => {
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
@@ -70,7 +73,6 @@ export function runTitleScreen(canvas, images, onProceed){
       if(!settled){ settled = true; skippedAt = performance.now(); return; }
       stopped = true;
       detach();
-      if(onProceed) onProceed();
       resolve();
     }
 

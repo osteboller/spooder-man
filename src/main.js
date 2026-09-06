@@ -69,6 +69,24 @@ function bindToolbar(getGame){
   });
 }
 
+// Starts the intro bgm on the very first gesture anywhere on the page —
+// deliberately not scoped to the canvas or the title screen, since neither
+// exists yet if the player taps during the loading screen. { once: true }
+// both caps it to firing exactly once and removes the listeners for us.
+// If that gesture lands before loadBgm() has actually finished, startBgm()
+// silently no-ops (nothing decoded yet) and the listener is already spent —
+// boot() checks this flag once loading completes and retries in that case.
+let userHasGestured = false;
+function startIntroBgmOnFirstGesture(){
+  const onGesture = () => {
+    userHasGestured = true;
+    startBgm('intro');
+  };
+  document.addEventListener('mousedown', onGesture, { once: true });
+  document.addEventListener('touchstart', onGesture, { once: true, passive: true });
+  document.addEventListener('keydown', onGesture, { once: true });
+}
+
 async function boot(){
   const canvas = document.getElementById('c');
   const ui = createUI();
@@ -77,6 +95,7 @@ async function boot(){
 
   let game = null;
   bindToolbar(() => game);
+  startIntroBgmOnFirstGesture();
 
   const [images] = await Promise.all([
     loadAllImages(undefined, (loaded, total) => {
@@ -88,13 +107,14 @@ async function boot(){
     loadBgm().catch(err => console.warn('Background music failed to load:', err))
   ]);
   loadingEl.style.display = 'none';
+  if(userHasGestured) startBgm('intro'); // covers a gesture that landed before bgm finished loading
 
   game = createGame(canvas, images);
 
   // The title screen owns the canvas (and its own input) until the player
   // actually starts — bindInput/game.start only happen after that, so the
   // two never fight over the same clicks.
-  await runTitleScreen(canvas, images, () => startBgm());
+  await runTitleScreen(canvas, images);
 
   // A hard cut from the title card to the running game read as abrupt —
   // fade to black, swap what's showing while nobody can see it, fade back in.
@@ -104,6 +124,7 @@ async function boot(){
     onDown: (pos) => game.handleDown(ui, pos),
     onUp: (dragDelta) => game.handleUp(ui, dragDelta)
   });
+  startBgm('level'); // the first course is about to start — hand off from the intro track
   game.start(ui);
   await fadeScreen(false);
 }
