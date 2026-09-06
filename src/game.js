@@ -20,9 +20,8 @@ const MAX_FLIGHT_FRAMES = 420;
 // see more of it), and airborne it pulls out with your speed. Only the two
 // static states are table-driven.
 const ZOOM_TARGETS = { dead: 1.3, won: 0.8 };
-const ZOOM_IDLE = 0.8;        // on a grip, charge not started
-const ZOOM_CHARGED = 0.5;     // on a grip, fully charged
-const AIRBORNE_ZOOM = 0.6;    // airborne and barely moving
+const ZOOM_BY_POWER = [0.78, 0.62, 0.48]; // on a grip: one distinct step out per power level, snapped to rather than eased into, so levelling up reads as a jolt
+const AIRBORNE_ZOOM = 0.66;   // airborne and barely moving — deliberately tighter than a charged grip, so launching punches back in
 const AIRBORNE_ZOOM_MIN = 0.5;// airborne at AIRBORNE_ZOOM_FULL_SPEED or above — also the clearance the rope anchor is placed against, so it stays off-screen at every airborne zoom
 const AIRBORNE_ZOOM_FULL_SPEED = 42; // px/frame at which the airborne view is all the way out
 const ROTATIONS_PER_LEVEL = 2; // full aim-rotations needed to auto-bump power up one notch
@@ -37,6 +36,11 @@ const ANCHOR_MARGIN_PX = 48;  // screen px the anchor sits above the visible top
 const ROPE_RELEASE_HOP = 4;   // small upward kick on dismounting a rope (not on a rope-to-rope swap) — reads as a little jump off the swing
 const ROPE_CATCH_SPEED_KEEP = 1; // fraction of your speed a new rope keeps when it catches you: 1 = chaining ropes costs nothing, lower = each catch bleeds some speed
 const LAND_FORGIVENESS = 6;   // world units of extra landing leniency on top of the node/player radii
+// Enemy reach vs. yours. These used to be wildly lopsided: a tap punched from
+// e.r + ENEMY_WARN_MARGIN (~207px) away while an enemy only landed a hit
+// inside e.r + PLAYER_R*0.6 (~25px), so they were almost impossible to lose to.
+const ENEMY_HIT_MARGIN = 26;  // extra radius past the enemy's own that counts as it hitting you
+const PUNCH_RANGE = 120;      // how far a mid-flight tap reaches to take one out
 const SWING_CAST_ANGLE = 45 * Math.PI / 180; // fixed angle (from straight down) the rope always attaches at — only left/right depends on the drag, not distance. Also ropeSwing1/2's frame-0 pose.
 const SWING_TURN_MIN_ANGLE = 15 * Math.PI / 180; // crests smaller than this skip the turn flourish entirely — a nearly settled swing just rocks through the middle frames instead
 const SWING_TURN_ARC = 12 * Math.PI / 180; // fixed angular span (not a fraction of the peak) the turn plays out over — a fixed span still takes longer for a small/dying peak, since gravity's pull back through it is weaker there too
@@ -110,8 +114,6 @@ export function createGame(canvas, images){
     deathHoldMs = 0;
     ghostRopes = [];
 
-    ui.setTotal(nodes.length - 1);
-    ui.setGrabs(0);
     ui.setPoints(0);
     ui.setTime(0);
     ui.setLives(lives, MAX_LIVES);
@@ -251,7 +253,7 @@ export function createGame(canvas, images){
     let defeatedAny = false;
     for(const e of enemies){
       if(e.resolved) continue;
-      if(dist(flight.x, flight.y, e.x, e.y) > e.r + ENEMY_WARN_MARGIN) continue; // must be in range right now, not just at some earlier point in the flight
+      if(dist(flight.x, flight.y, e.x, e.y) > e.r + PUNCH_RANGE) continue; // must be in range right now, not just at some earlier point in the flight
       e.defeated = true;
       e.resolved = true;
       defeatedAny = true;
@@ -288,8 +290,6 @@ export function createGame(canvas, images){
     const bonus = (wasNew && !node.isGoal) ? getSpeedBonus(hopMs) : null;
 
     if(wasNew){
-      const grabbedCount = nodes.filter(n => n.grabbed).length - 1;
-      ui.setGrabs(grabbedCount);
       if(!node.isGoal){
         points += node.points + (bonus ? bonus.points : 0);
         ui.setPoints(points);
@@ -517,7 +517,7 @@ export function createGame(canvas, images){
           if(e.resolved) continue;
           const d = dist(flight.x, flight.y, e.x, e.y);
           const warnR = e.r + ENEMY_WARN_MARGIN;
-          const hitR = e.r + PLAYER_R * 0.6;
+          const hitR = e.r + ENEMY_HIT_MARGIN;
 
           if(!e.engaged && d <= warnR) e.engaged = true;
 
@@ -613,14 +613,15 @@ export function createGame(canvas, images){
       const t = Math.min(1, speed / AIRBORNE_ZOOM_FULL_SPEED);
       zoomTarget = AIRBORNE_ZOOM + (AIRBORNE_ZOOM_MIN - AIRBORNE_ZOOM) * t;
     } else if(state === 'idle' || state === 'charging'){
-      // Pulls out as the charge builds — by full power you're about to cross
-      // a lot of ground, so you get to see enough of it to aim at.
-      const charge = Math.min(1, currentPowerProgress / (MAX_POWER_LEVEL - 1));
-      zoomTarget = ZOOM_IDLE + (ZOOM_CHARGED - ZOOM_IDLE) * charge;
+      // One step per power level rather than a continuous creep — the view
+      // kicks out a notch exactly when the charge levels up.
+      zoomTarget = ZOOM_BY_POWER[currentPowerLevel - 1];
     } else {
       zoomTarget = ZOOM_TARGETS[state] ?? 1.0;
     }
-    const zoomLerp = state === 'dead' ? 0.1 : 0.06;
+    // Ground zoom snaps between its steps; everything else keeps easing.
+    const onGrip = state === 'idle' || state === 'charging';
+    const zoomLerp = state === 'dead' ? 0.1 : onGrip ? 0.22 : 0.06;
     cam.zoom += (zoomTarget - cam.zoom) * zoomLerp;
   }
 
