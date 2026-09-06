@@ -14,12 +14,26 @@ html,body{
   background:var(--paper);
   font-family: 'Arial Black', Impact, sans-serif;
   -webkit-user-select:none; user-select:none;
-  touch-action:none;
+  /* touch-action:none used to sit here (whole page) — it belongs on the
+     canvas alone (below), where it stops a game-drag from also scrolling/
+     zooming the page. Globally it also fights normal touch handling on
+     ordinary controls, most likely why the mute buttons and the volume
+     sliders were unreliable on real mobile browsers, not just the touchend
+     bug already fixed in input.js. */
+  -webkit-tap-highlight-color:transparent; /* kills the stuck-blue flash a tap leaves on buttons on some mobile browsers — cosmetic, unrelated to whether the click actually registers */
 }
 #wrap{
   position:relative;
   width:100%; height:100%;
   display:flex; align-items:center; justify-content:center;
+}
+/* Shrink-wraps to the canvas's own rendered box (a flex item sizes to its
+   content unless stretched, and #wrap centers rather than stretches) — so
+   anything absolutely positioned inside it, like the fade and the options
+   backdrop, dims exactly the game and nothing outside it. */
+#canvas-wrap{
+  position:relative;
+  line-height:0; /* canvas is inline by default; this drops the sliver of extra space that leaves below it */
 }
 canvas{
   background:#000;
