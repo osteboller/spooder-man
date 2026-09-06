@@ -97,11 +97,13 @@ export function createGame(canvas, images){
 
   function currentNode(){ return nodes[currentIndex]; }
 
-  // World-space floating callouts (CHARGING / ATTACK / WEB-SWIPE) — pure
-  // juice, no gameplay effect. spawn/update/draw follow the same
-  // world-coords-plus-startTime pattern as ghostRopes.
-  function spawnFloatingText(text, wx, wy){
-    floatingTexts.push({ text, x: wx, y: wy, startTime: performance.now() });
+  // World-space floating callouts (CHARGING / ATTACK / WEB-SWIPE / NICE GRAB)
+  // — pure juice, no gameplay effect. spawn/update/draw follow the same
+  // world-coords-plus-startTime pattern as ghostRopes. Color defaults to
+  // white; giving NICE GRAB its own green keeps the two readable apart at a
+  // glance instead of every callout looking the same.
+  function spawnFloatingText(text, wx, wy, color = '#fff'){
+    floatingTexts.push({ text, x: wx, y: wy, startTime: performance.now(), color });
   }
 
   function updateFloatingTexts(){
@@ -342,7 +344,11 @@ export function createGame(canvas, images){
     if(wasNew){
       playSfx('grab');
       const gain = bonus ? `+${node.points + bonus.points} · ${bonus.label}` : `+${node.points}`;
-      ui.showMessage(`NICE GRAB!<br><small>${gain}</small>`, { brief: true, shouldHide: () => state === 'idle' });
+      // Floating, not a modal overlay — this fires on every single grab, so a
+      // blocking DOM message here was covering up exactly the upcoming nodes
+      // and enemies you need to see mid-flight. Green ties it to the same
+      // color the just-grabbed node itself flashes.
+      spawnFloatingText(`NICE GRAB! ${gain}`, node.x, node.y - 90, '#3ecf6e');
     }
     // revisiting a node you've already grabbed: just move there, no fanfare
   }
@@ -863,11 +869,11 @@ export function createGame(canvas, images){
     ctx.font = 'bold 22px Arial';
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#111';
-    ctx.fillStyle = '#fff';
     for(const t of floatingTexts){
       const p = (now - t.startTime) / FLOAT_TEXT_MS;
       const { x, y } = toScreen(cam, W, H, t.x, t.y - p * FLOAT_TEXT_RISE);
       ctx.globalAlpha = 1 - p;
+      ctx.fillStyle = t.color;
       ctx.strokeText(t.text, x, y);
       ctx.fillText(t.text, x, y);
     }

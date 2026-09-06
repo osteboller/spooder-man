@@ -41,7 +41,12 @@ function pitchDrop(startFreq, endFreq, duration, type = 'square', gainVal = 0.2)
   osc.stop(now + duration);
 }
 
+let sfxMuted = false;
+export function setSfxMuted(muted){ sfxMuted = muted; }
+export function isSfxMuted(){ return sfxMuted; }
+
 export function playSfx(name){
+  if(sfxMuted) return;
   switch(name){
     case 'launch':
       beep(320, 0.12, 'square', 0.1);
@@ -75,9 +80,12 @@ export function playSfx(name){
 // mobile/desktop browser blocks audio until the first tap/click/keypress),
 // so startBgm() must only be called from inside a real input handler.
 const BGM_TRACK = 'assets/audio/bgm/Neon Hero Run.mp3';
+const BGM_VOLUME = 0.35;
 
 let bgmBuffer = null;
 let bgmSource = null;
+let bgmGain = null;
+let bgmMuted = false;
 
 export async function loadBgm(){
   const ctx = getCtx();
@@ -86,14 +94,20 @@ export async function loadBgm(){
   bgmBuffer = await ctx.decodeAudioData(data);
 }
 
+export function setBgmMuted(muted){
+  bgmMuted = muted;
+  if(bgmGain) bgmGain.gain.value = muted ? 0 : BGM_VOLUME;
+}
+export function isBgmMuted(){ return bgmMuted; }
+
 export function startBgm(){
   if(!bgmBuffer || bgmSource) return; // not loaded yet, or already playing
   const ctx = getCtx();
-  const gain = ctx.createGain();
-  gain.gain.value = 0.35;
+  bgmGain = ctx.createGain();
+  bgmGain.gain.value = bgmMuted ? 0 : BGM_VOLUME;
   bgmSource = ctx.createBufferSource();
   bgmSource.buffer = bgmBuffer;
   bgmSource.loop = true;
-  bgmSource.connect(gain).connect(ctx.destination);
+  bgmSource.connect(bgmGain).connect(ctx.destination);
   bgmSource.start(0);
 }

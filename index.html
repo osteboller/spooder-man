@@ -8,9 +8,21 @@
 <body>
 <div id="wrap">
   <div id="hud">
-    <div class="chip chip-points">SCORE: <span id="points">0</span></div>
-    <div class="chip chip-time">TIME: <span id="time">0:00.0</span></div>
     <div class="chip chip-lives">LIVES: <span id="lives"></span></div>
+    <div class="chip chip-time">TIME: <span id="time">0:00.0</span></div>
+    <div class="chip chip-points">SCORE: <span id="points">0</span></div>
+  </div>
+  <div id="toolbar">
+    <button id="btn-options" class="icon-btn" aria-label="Options" title="Options">⚙</button>
+    <button id="btn-music" class="icon-btn" aria-label="Toggle music" title="Music">♪</button>
+    <button id="btn-sfx" class="icon-btn" aria-label="Toggle sound effects" title="Sound effects">🔊</button>
+  </div>
+  <div id="options-overlay" class="overlay" hidden>
+    <div class="overlay-panel">
+      <button id="options-close" class="overlay-close" aria-label="Close">✕</button>
+      <h2>OPTIONS</h2>
+      <p>Difficulty select is coming soon. Music/SFX toggles live in the toolbar for now.</p>
+    </div>
   </div>
   <div id="msg"></div>
   <canvas id="c" width="900" height="560"></canvas>

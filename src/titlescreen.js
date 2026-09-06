@@ -10,11 +10,15 @@
 // the right. Finally "PRESS TO START" blinks and waits for a tap/click/key.
 // A press during the intro skips straight to the settled state instead of
 // being ignored — nobody wants to sit through the same intro every retry.
-const BG_ZOOM_START = 1.3;   // background starts this much more zoomed in than its settled "cover" scale
-const BG_ZOOM_MS = 1000;     // how long the zoom+pan settle takes
-const BG_PAN_START_PX = 80;  // background starts panned this many (screen) px further down, revealing less of the street — settles to 0
+// A held zoom (not an animated one) just big enough to create vertical slack
+// to pan within — the pan itself is the whole effect; if the zoom animated
+// too it reads as "shrinking" instead of "camera panning down".
+const BG_ZOOM = 1.15;
+const BG_PAN_MS = 1000; // how long the pan-down settle takes
 
-const LOGO_START_MS = BG_ZOOM_MS + 100, LOGO_DURATION_MS = 500, LOGO_SLIDE_PX = 50;
+const LOGO_SCALE = 0.85;  // vs. the shared base size — full size clipped at the top
+const PLAYER_SCALE = 0.90;
+const LOGO_START_MS = BG_PAN_MS + 100, LOGO_DURATION_MS = 500, LOGO_SLIDE_PX = 50;
 const PLAYER_START_MS = LOGO_START_MS + 300, PLAYER_DURATION_MS = 500, PLAYER_SLIDE_PX = 70;
 const SETTLED_MS = PLAYER_START_MS + PLAYER_DURATION_MS;
 const PROMPT_BLINK_MS = 700;
@@ -29,6 +33,16 @@ function coverTransform(img, canvasW, canvasH){
   const scale = Math.max(canvasW / img.width, canvasH / img.height);
   const dw = img.width * scale, dh = img.height * scale;
   return { dw, dh, dx: (canvasW - dw) / 2, dy: (canvasH - dh) / 2 };
+}
+
+// Scales a box by `factor` around its own center, so shrinking a layer (the
+// logo, clipped at the top at full size; the player, just meant to read
+// slightly smaller) pulls its edges in evenly instead of shifting it toward
+// one corner.
+function centeredScale(box, factor){
+  const dw = box.dw * factor, dh = box.dh * factor;
+  const cx = box.dx + box.dw / 2, cy = box.dy + box.dh / 2;
+  return { dw, dh, dx: cx - dw / 2, dy: cy - dh / 2 };
 }
 
 // Resolves once the player has actually chosen to start (not on the
@@ -82,31 +96,41 @@ export function runTitleScreen(canvas, images, onProceed){
       ctx.fillRect(0, 0, W, H);
 
       if(images.titleBg){
-        const t = easeOutCubic(clamp01(elapsed / BG_ZOOM_MS));
-        const zoom = BG_ZOOM_START + (1 - BG_ZOOM_START) * t;
-        const dw = base.dw * zoom, dh = base.dh * zoom;
+        // Scale is CONSTANT — only the vertical position animates. Animating
+        // both at once (the previous version) reads as "shrinking"; a pure
+        // slide reads as a camera pan. dy starts at 0 (image top flush with
+        // the canvas top, so we see as much sky as the held zoom allows and
+        // the street is cropped off the bottom) and eases down to the normal
+        // centered crop — the image itself slides UP on screen, which is
+        // exactly a camera panning DOWN over it.
+        const dw = base.dw * BG_ZOOM, dh = base.dh * BG_ZOOM;
+        const dyEnd = (H - dh) / 2;
+        const t = easeOutCubic(clamp01(elapsed / BG_PAN_MS));
+        const dy = dyEnd * t; // 0 -> dyEnd
         ctx.save();
-        ctx.globalAlpha = clamp01(elapsed / (BG_ZOOM_MS * 0.5)); // fades in faster than the zoom settles
+        ctx.globalAlpha = clamp01(elapsed / (BG_PAN_MS * 0.4));
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(images.titleBg, (W - dw) / 2, (H - dh) / 2 + BG_PAN_START_PX * (1 - t), dw, dh);
+        ctx.drawImage(images.titleBg, (W - dw) / 2, dy, dw, dh);
         ctx.restore();
       }
 
+      const logoBox = centeredScale(base, LOGO_SCALE);
       const logoT = easeOutCubic(clamp01((elapsed - LOGO_START_MS) / LOGO_DURATION_MS));
       if(logoT > 0 && images.titleLogo){
         ctx.save();
         ctx.globalAlpha = logoT;
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(images.titleLogo, base.dx, base.dy - LOGO_SLIDE_PX * (1 - logoT), base.dw, base.dh);
+        ctx.drawImage(images.titleLogo, logoBox.dx, logoBox.dy - LOGO_SLIDE_PX * (1 - logoT), logoBox.dw, logoBox.dh);
         ctx.restore();
       }
 
+      const playerBox = centeredScale(base, PLAYER_SCALE);
       const playerT = easeOutCubic(clamp01((elapsed - PLAYER_START_MS) / PLAYER_DURATION_MS));
       if(playerT > 0 && images.titlePlayer){
         ctx.save();
         ctx.globalAlpha = playerT;
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(images.titlePlayer, base.dx + PLAYER_SLIDE_PX * (1 - playerT), base.dy, base.dw, base.dh);
+        ctx.drawImage(images.titlePlayer, playerBox.dx + PLAYER_SLIDE_PX * (1 - playerT), playerBox.dy, playerBox.dw, playerBox.dh);
         ctx.restore();
       }
 
