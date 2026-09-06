@@ -80,5 +80,11 @@ export function setFrameByPhase(anim, images, phase){
   const def = anim.defs[anim.current];
   if(!def) return;
   const count = frameCountOf(def, images);
-  anim.frameIndex = Math.round(Math.max(0, Math.min(1, phase)) * (count - 1));
+  // floor into count EQUAL-width buckets, not round against (count-1) frame
+  // positions — round() gives the two end frames half the span of every
+  // middle frame (their bucket only extends one way, not both), so they
+  // flash by while the middle frame(s) linger. Floor gives every frame the
+  // same 1/count share of the phase range.
+  const clamped = Math.max(0, Math.min(0.999999, phase));
+  anim.frameIndex = Math.floor(clamped * count);
 }
