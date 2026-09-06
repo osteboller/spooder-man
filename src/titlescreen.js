@@ -1,29 +1,34 @@
-// Animated title card: three layered PNGs (bg, logo, player) ease in one
-// after another, then a tap/click/key hands off to the game. A press during
-// the intro skips straight to the settled state instead of being ignored —
-// nobody wants to sit through the same intro every time they retry.
-const BG_FADE_MS = 700;
-const LOGO_START_MS = 400, LOGO_DURATION_MS = 600, LOGO_SLIDE_PX = 50; // starts this far above rest
-const PLAYER_START_MS = 800, PLAYER_DURATION_MS = 600, PLAYER_SLIDE_PX = 70; // starts this far right of rest
+// Animated title card. bg/logo/player are all the same 320x256 frame,
+// pre-composed to align when simply stacked — so all three MUST share the
+// exact same scale/position (computed once, from whichever loads); only the
+// background gets its own independent zoom/pan, everything else rides the
+// shared transform untouched.
+//
+// Sequence: background starts zoomed in and panned up (so it reads as
+// looking up at the moon), settles like a camera panning down — then the
+// logo fades+slides down into place, then the player fades+slides in from
+// the right. Finally "PRESS TO START" blinks and waits for a tap/click/key.
+// A press during the intro skips straight to the settled state instead of
+// being ignored — nobody wants to sit through the same intro every retry.
+const BG_ZOOM_START = 1.3;   // background starts this much more zoomed in than its settled "cover" scale
+const BG_ZOOM_MS = 1000;     // how long the zoom+pan settle takes
+const BG_PAN_START_PX = 80;  // background starts panned this many (screen) px further down, revealing less of the street — settles to 0
+
+const LOGO_START_MS = BG_ZOOM_MS + 100, LOGO_DURATION_MS = 500, LOGO_SLIDE_PX = 50;
+const PLAYER_START_MS = LOGO_START_MS + 300, PLAYER_DURATION_MS = 500, PLAYER_SLIDE_PX = 70;
 const SETTLED_MS = PLAYER_START_MS + PLAYER_DURATION_MS;
 const PROMPT_BLINK_MS = 700;
 
 function clamp01(t){ return Math.max(0, Math.min(1, t)); }
 function easeOutCubic(t){ return 1 - Math.pow(1 - t, 3); }
 
-// Draws an image scaled to a target box while preserving its own aspect
-// ratio (contain, not stretch) — used for both the full-bleed background
-// (which ends up covering, since it's wider than it is tall relative to the
-// canvas) and the logo/player art sized against canvas height.
-function drawContained(ctx, img, cx, cy, boxW, boxH, alpha){
-  if(!img || alpha <= 0) return;
-  const scale = Math.max(boxW / img.width, boxH / img.height);
+// The shared "cover the canvas" transform every layer is drawn at (before
+// each layer's own small entrance offset) — computed once from whichever
+// title-screen image is available, since they're all the same dimensions.
+function coverTransform(img, canvasW, canvasH){
+  const scale = Math.max(canvasW / img.width, canvasH / img.height);
   const dw = img.width * scale, dh = img.height * scale;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh);
-  ctx.restore();
+  return { dw, dh, dx: (canvasW - dw) / 2, dy: (canvasH - dh) / 2 };
 }
 
 // Resolves once the player has actually chosen to start (not on the
@@ -34,23 +39,21 @@ export function runTitleScreen(canvas, images, onProceed){
   return new Promise(resolve => {
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
+    const ref = images.titleBg || images.titleLogo || images.titlePlayer;
+    const base = ref ? coverTransform(ref, W, H) : { dw: W, dh: H, dx: 0, dy: 0 };
+
     let startTime = null;
-    let skippedAt = null; // elapsed-ms clock offset applied once the intro is skipped
+    let skippedAt = null; // freezes elapsedMs() at "fully settled" once set
     let settled = false;
     let stopped = false;
 
     function elapsedMs(now){
-      if(skippedAt !== null) return SETTLED_MS;
-      return now - startTime;
+      return skippedAt !== null ? SETTLED_MS : now - startTime;
     }
 
     function handleInput(e){
       e.preventDefault();
-      if(!settled){
-        skippedAt = performance.now(); // freezes elapsedMs() at "fully settled" from here on
-        settled = true;
-        return;
-      }
+      if(!settled){ settled = true; skippedAt = performance.now(); return; }
       stopped = true;
       detach();
       if(onProceed) onProceed();
@@ -78,25 +81,33 @@ export function runTitleScreen(canvas, images, onProceed){
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, W, H);
 
-      // Background covers the full canvas — its own 320x256 proportions are
-      // narrower than the canvas's, so this crops the sides slightly rather
-      // than stretching the art out of shape.
-      drawContained(ctx, images.titleBg, W / 2, H / 2, W, H, clamp01(elapsed / BG_FADE_MS));
-
-      const logoP = easeOutCubic(clamp01((elapsed - LOGO_START_MS) / LOGO_DURATION_MS));
-      if(logoP > 0){
-        const logo = images.titleLogo;
-        const boxH = H * 0.34;
-        const boxW = logo ? boxH * (logo.width / logo.height) : boxH;
-        drawContained(ctx, logo, W / 2, H * 0.24 - LOGO_SLIDE_PX * (1 - logoP), boxW, boxH, logoP);
+      if(images.titleBg){
+        const t = easeOutCubic(clamp01(elapsed / BG_ZOOM_MS));
+        const zoom = BG_ZOOM_START + (1 - BG_ZOOM_START) * t;
+        const dw = base.dw * zoom, dh = base.dh * zoom;
+        ctx.save();
+        ctx.globalAlpha = clamp01(elapsed / (BG_ZOOM_MS * 0.5)); // fades in faster than the zoom settles
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(images.titleBg, (W - dw) / 2, (H - dh) / 2 + BG_PAN_START_PX * (1 - t), dw, dh);
+        ctx.restore();
       }
 
-      const playerP = easeOutCubic(clamp01((elapsed - PLAYER_START_MS) / PLAYER_DURATION_MS));
-      if(playerP > 0){
-        const player = images.titlePlayer;
-        const boxH = H * 0.62;
-        const boxW = player ? boxH * (player.width / player.height) : boxH;
-        drawContained(ctx, player, W * 0.68 + PLAYER_SLIDE_PX * (1 - playerP), H * 0.66, boxW, boxH, playerP);
+      const logoT = easeOutCubic(clamp01((elapsed - LOGO_START_MS) / LOGO_DURATION_MS));
+      if(logoT > 0 && images.titleLogo){
+        ctx.save();
+        ctx.globalAlpha = logoT;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(images.titleLogo, base.dx, base.dy - LOGO_SLIDE_PX * (1 - logoT), base.dw, base.dh);
+        ctx.restore();
+      }
+
+      const playerT = easeOutCubic(clamp01((elapsed - PLAYER_START_MS) / PLAYER_DURATION_MS));
+      if(playerT > 0 && images.titlePlayer){
+        ctx.save();
+        ctx.globalAlpha = playerT;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(images.titlePlayer, base.dx + PLAYER_SLIDE_PX * (1 - playerT), base.dy, base.dw, base.dh);
+        ctx.restore();
       }
 
       if(settled){
