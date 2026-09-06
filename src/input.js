@@ -7,6 +7,18 @@
 // and release, in the same coordinate space — used for aiming the rope-swing anchor.
 export function bindInput(canvas, { onDown, onUp }){
   let downX = 0, downY = 0;
+  // Whether the gesture currently in progress actually started on the
+  // canvas (or Space). up() is bound on window — necessarily, since dragging
+  // to aim the rope can carry the pointer outside the canvas before release
+  // — but that meant it also fired, and called preventDefault(), for EVERY
+  // touchend/mouseup anywhere on the page, including a tap on an ordinary DOM
+  // button (the mute toggles, the options close button). On touch devices
+  // preventDefault()-ing a touchend suppresses the synthetic click that
+  // would otherwise follow, so those buttons silently never received their
+  // click — worked with a mouse (mouseup's preventDefault doesn't suppress
+  // click the same way), broke on every mobile browser. Only treat a
+  // release as ours if the matching press was.
+  let active = false;
 
   function canvasPoint(e){
     const src = e.changedTouches ? e.changedTouches[0] : e; // touchend has nothing in e.touches
@@ -20,12 +32,15 @@ export function bindInput(canvas, { onDown, onUp }){
 
   const down = (e) => {
     e.preventDefault();
+    active = true;
     const p = canvasPoint(e);
     downX = p ? p.x : 0;
     downY = p ? p.y : 0;
     onDown(p); // null for keyboard — no position to report
   };
   const up = (e) => {
+    if(!active) return; // this release isn't ours — let the page (e.g. a button) handle it normally
+    active = false;
     e.preventDefault();
     const p = canvasPoint(e);
     onUp(p ? { dx: p.x - downX, dy: p.y - downY } : { dx: 0, dy: 0 });

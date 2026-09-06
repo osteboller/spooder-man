@@ -66,6 +66,7 @@ export function createGame(canvas, images){
 
   let nodes = [];
   let currentIndex = 0;
+  let paused = false; // e.g. the options overlay is open — draw() keeps rendering the frozen frame, update() does nothing
   let state = 'idle'; // idle -> charging -> flying <-> swinging -> dead -> won
   let downState = null; // state captured at press-time, so handleUp knows what gesture it's closing out
   let swingSlot = 1; // alternates 1/2 on every rope cast, so the pose alternates like hand-over-hand
@@ -399,7 +400,9 @@ export function createGame(canvas, images){
   function update(ui){
     const now = performance.now();
     const dt = now - lastFrameTime;
-    lastFrameTime = now;
+    lastFrameTime = now; // kept current even while paused, so dt can't spike into a huge jump on resume
+
+    if(paused) return; // draw() still runs every frame off whatever state is already there
 
     if(freezeMs > 0){
       freezeMs = Math.max(0, freezeMs - dt);
@@ -954,6 +957,7 @@ export function createGame(canvas, images){
       releaseCharge(); // no-ops unless a ground charge is actually in progress
       if(downState === 'flying') maybeCastRope(dragDelta);
       else if(downState === 'swinging') swapRope(dragDelta);
-    }
+    },
+    setPaused(p){ paused = p; }
   };
 }

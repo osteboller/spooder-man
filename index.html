@@ -17,11 +17,28 @@
     <button id="btn-music" class="icon-btn" aria-label="Toggle music" title="Music">♪</button>
     <button id="btn-sfx" class="icon-btn" aria-label="Toggle sound effects" title="Sound effects">🔊</button>
   </div>
-  <div id="options-overlay" class="overlay" hidden>
-    <div class="overlay-panel">
+  <div id="options-overlay" class="overlay">
+    <div class="overlay-panel options-panel">
       <button id="options-close" class="overlay-close" aria-label="Close">✕</button>
-      <h2>OPTIONS</h2>
-      <p>Difficulty select is coming soon. Music/SFX toggles live in the toolbar for now.</p>
+      <div class="options-content">
+        <h2>OPTIONS</h2>
+        <div class="options-row">
+          <label for="sfx-volume">SFX</label>
+          <input type="range" id="sfx-volume" min="0" max="100" value="100">
+        </div>
+        <div class="options-row">
+          <label for="bgm-volume">MUSIC</label>
+          <input type="range" id="bgm-volume" min="0" max="100" value="35">
+        </div>
+        <p class="options-note">Difficulty select is coming soon.</p>
+        <h3>HOW TO PLAY</h3>
+        <ul class="howto-list">
+          <li><b>Hop:</b> press and hold on a grip to charge — release to launch.</li>
+          <li><b>Swing:</b> in mid-air, drag and release to fire a web and swing. Drag again mid-swing to grab a new web without losing speed, or just tap to let go.</li>
+          <li><b>Punch:</b> tap while flying near an enemy to knock it out of your way.</li>
+          <li><b>1-UP:</b> grab the spinning coin for an extra life.</li>
+        </ul>
+      </div>
     </div>
   </div>
   <div id="msg"></div>
@@ -30,6 +47,7 @@
     <div class="loading-label">LOADING…</div>
     <div class="loading-bar"><div class="loading-bar-fill" id="loading-fill"></div></div>
   </div>
+  <div id="screen-fade"></div>
 </div>
 
 <script type="module" src="src/main.js"></script>

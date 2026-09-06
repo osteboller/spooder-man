@@ -14,7 +14,7 @@
 // to pan within — the pan itself is the whole effect; if the zoom animated
 // too it reads as "shrinking" instead of "camera panning down".
 const BG_ZOOM = 1.15;
-const BG_PAN_MS = 1000; // how long the pan-down settle takes
+const BG_PAN_MS = 1900; // how long the pan-down settle takes
 
 const LOGO_SCALE = 0.85;  // vs. the shared base size — full size clipped at the top
 const PLAYER_SCALE = 0.90;

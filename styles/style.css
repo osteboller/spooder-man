@@ -107,13 +107,20 @@ canvas{
 }
 .icon-btn:active{ transform:translate(2px,2px); box-shadow:2px 2px 0 var(--ink); }
 .icon-btn-muted{ background:var(--grey); opacity:0.6; }
+/* Fades via opacity instead of an instant [hidden] snap — stays in the DOM
+   (invisible + non-interactive) while closed so the transition has something
+   to animate. game.js is told to pause/resume in lockstep with this (see
+   main.js), so play can't continue invisibly behind it. */
 .overlay{
   position:absolute; inset:0;
   background:rgba(0,0,0,0.6);
   display:flex; align-items:center; justify-content:center;
   z-index:4;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity 0.25s ease;
 }
-.overlay[hidden]{ display:none; }
+.overlay.open{ opacity:1; pointer-events:auto; }
 .overlay-panel{
   position:relative;
   background:var(--paper);
@@ -133,7 +140,92 @@ canvas{
   font-size:16px; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
   padding:0;
+  z-index:1;
 }
+
+/* Options panel layers the character art over the web pattern via stacked
+   backgrounds (first listed = topmost) — both are the same 324x248 frame,
+   pre-composed to align, same idea as the title screen's three layers but
+   simple enough here to do in pure CSS instead of canvas. A dark scrim sits
+   between the art and the text (::before) so sliders/labels stay readable
+   over what's otherwise a fairly busy image. */
+.options-panel{
+  max-width:420px;
+  width:90vw;
+  padding:0;
+  background-image:
+    url('../assets/startscreens/options_menu_character.png'),
+    url('../assets/startscreens/options_menu.png');
+  background-size:cover, cover;
+  background-position:center, center;
+  background-repeat:no-repeat, no-repeat;
+}
+.options-panel::before{
+  content:'';
+  position:absolute; inset:0;
+  background:rgba(10,10,20,0.62);
+}
+.options-content{
+  position:relative;
+  padding:26px 28px;
+  max-height:80vh;
+  overflow-y:auto;
+  color:var(--paper);
+}
+.options-content h2{ margin:0 0 16px; font-size:26px; color:var(--paper); }
+.options-content h3{ margin:18px 0 8px; font-size:18px; color:var(--yellow); }
+.options-row{
+  display:flex; align-items:center; gap:12px;
+  margin-bottom:14px;
+  font-family:Arial, sans-serif;
+}
+.options-row label{ width:60px; text-align:left; font-family:'Arial Black',Impact,sans-serif; font-size:14px; }
+.options-row input[type="range"]{
+  flex:1;
+  /* Semi-transparent track, as asked, rather than an opaque default slider —
+     lets the layered art show through instead of a flat bar. */
+  appearance:none; -webkit-appearance:none;
+  height:10px;
+  background:rgba(244,233,216,0.35);
+  border:2px solid var(--ink);
+  border-radius:2px;
+}
+.options-row input[type="range"]::-webkit-slider-thumb{
+  appearance:none; -webkit-appearance:none;
+  width:20px; height:20px;
+  background:var(--yellow);
+  border:2px solid var(--ink);
+  border-radius:50%;
+  cursor:pointer;
+}
+.options-row input[type="range"]::-moz-range-thumb{
+  width:20px; height:20px;
+  background:var(--yellow);
+  border:2px solid var(--ink);
+  border-radius:50%;
+  cursor:pointer;
+}
+.options-note{
+  font-family:Arial, sans-serif; font-size:12px; opacity:0.8;
+  margin:4px 0 0;
+  text-align:left;
+}
+.howto-list{
+  font-family:Arial, sans-serif; font-size:13px; line-height:1.5;
+  text-align:left;
+  margin:0; padding-left:18px;
+}
+.howto-list li{ margin-bottom:6px; }
+.howto-list b{ color:var(--yellow); }
+#screen-fade{
+  position:absolute; inset:0;
+  background:#000;
+  opacity:0;
+  pointer-events:none;
+  z-index:5;
+  transition:opacity 0.35s ease;
+}
+#screen-fade.opaque{ opacity:1; }
 #msg small{
   display:block;
   font-size:13px;
