@@ -13,6 +13,7 @@ export const ASSET_MANIFEST = {
     playerSwingTurn: 'assets/sprites/player_swing_turn.png',
     playerSwingStop: 'assets/sprites/player_swing_stop.png',
     enemy: 'assets/sprites/enemy.png',
+    coin: 'assets/sprites/coin_16x16.png',
     bgNight1: 'assets/backgrounds/bg_night1.png',
     bgNight2: 'assets/backgrounds/bg_night2.png',
     bgDay1: 'assets/backgrounds/bg_day1.png',

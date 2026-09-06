@@ -45,6 +45,9 @@ canvas{
 .chip-points{ background:var(--pink); transform:rotate(2deg); }
 .chip-time{ background:var(--sky); transform:rotate(-1deg); }
 .chip-lives{ background:var(--red); color:var(--paper); transform:rotate(2deg); }
+#lives{ display:inline-flex; gap:4px; vertical-align:middle; }
+.life-icon{ width:24px; height:24px; image-rendering:pixelated; }
+.life-icon-empty{ opacity:0.3; filter:grayscale(1); }
 #msg{
   position:absolute; bottom:24px; left:50%;
   transform:translateX(-50%) rotate(-2deg);

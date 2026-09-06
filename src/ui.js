@@ -11,9 +11,19 @@ export function createUI(){
 
   return {
     setPoints(n){ pointsEl.textContent = String(n); },
+    // Renders one icon per life, dimmed past however many you actually have.
+    // A 1-up can push n past max, in which case every slot is filled and the
+    // row simply grows — there's no "overflow" concept, only more icons.
     setLives(n, max){
-      const filled = Math.max(0, Math.min(max, n));
-      livesEl.textContent = '❤'.repeat(filled) + '🤍'.repeat(max - filled);
+      const total = Math.max(n, max);
+      livesEl.innerHTML = '';
+      for(let i = 0; i < total; i++){
+        const img = document.createElement('img');
+        img.src = 'assets/sprites/lives_24x24.png';
+        img.alt = '';
+        img.className = i < n ? 'life-icon' : 'life-icon life-icon-empty';
+        livesEl.appendChild(img);
+      }
     },
 
     setTime(ms){

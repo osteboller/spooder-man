@@ -1,6 +1,6 @@
 import { createCamera, toScreen, toWorld } from './camera.js';
 import { GRAVITY, simulateTrajectory, dist } from './physics.js';
-import { generateLevel, remainingNodes, nearestRemaining, generateEnemies } from './level.js';
+import { generateLevel, remainingNodes, nearestRemaining, generateEnemies, generateCoin } from './level.js';
 import {
   createPlayerAnimator, resetPlayerAnimator,
   updatePlayerAnimation, drawPlayer, playPlayerAnim, playerAnimFinished, setPlayerSwingFrame,
@@ -8,6 +8,7 @@ import {
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
 import { updateEnemy, drawEnemy, ENEMY_WARN_MARGIN } from './enemy.js';
+import { updateCoin, drawCoin, COIN_PICKUP_RADIUS } from './coin.js';
 import { playSfx } from './audio.js';
 import { getSpeedBonus, formatTime } from './scoring.js';
 
@@ -84,6 +85,7 @@ export function createGame(canvas, images){
   let flightFrames = 0;
   let bgImage = null;
   let enemies = [];
+  let coin = null; // one 1-up per course, or null if none / already collected
   let elapsedMs = 0;
   let points = 0;
   let lastLandTime = 0;
@@ -130,6 +132,7 @@ export function createGame(canvas, images){
     bgImage = pickBackground(images, bgCycleIndex);
     bgCycleIndex++;
     enemies = generateEnemies(nodes);
+    coin = generateCoin(nodes, enemies);
     elapsedMs = 0;
     points = 0;
     lastLandTime = 0;
@@ -403,6 +406,7 @@ export function createGame(canvas, images){
     for(const e of enemies){
       if(!e.resolved) updateEnemy(e, dt, elapsedMs);
     }
+    if(coin) updateCoin(coin, dt);
 
     updateGhostRopes();
     updateFloatingTexts();
@@ -447,6 +451,15 @@ export function createGame(canvas, images){
     // mismatched second animation tacked on).
 
     if(state === 'flying' || state === 'swinging'){
+      if(coin && dist(flight.x, flight.y, coin.x, coin.y) <= COIN_PICKUP_RADIUS){
+        const cx = coin.x, cy = coin.y;
+        coin = null;
+        lives++;
+        ui.setLives(lives, MAX_LIVES);
+        playSfx('powerup');
+        spawnFloatingText('1-UP!', cx, cy);
+      }
+
       flight.vy += GRAVITY;
       flight.x += flight.vx;
       flight.y += flight.vy;
@@ -880,6 +893,11 @@ export function createGame(canvas, images){
       const { x, y } = toScreen(cam, W, H, e.x, e.y);
       drawEnemy(ctx, images.enemy, e, x, y, cam.zoom, e.engaged);
     });
+
+    if(coin){
+      const { x, y } = toScreen(cam, W, H, coin.x, coin.y);
+      drawCoin(ctx, images.coin, coin, x, y, cam.zoom);
+    }
 
     drawCompass();
     drawAimUI();
