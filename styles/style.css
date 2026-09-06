@@ -92,6 +92,8 @@ canvas{
   letter-spacing:2px;
   text-shadow:3px 3px 0 var(--ink);
 }
+.loading-label.blink{ animation:promptBlink 1.4s ease-in-out infinite; }
+@keyframes promptBlink{ 0%,100%{ opacity:1; } 50%{ opacity:0.4; } }
 .loading-bar{
   width:220px; height:20px;
   background:var(--ink);

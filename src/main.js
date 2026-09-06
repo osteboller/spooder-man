@@ -8,6 +8,7 @@ import {
   isBgmMuted, isSfxMuted, toggleBgmMute, toggleSfxMute
 } from './audio.js';
 import { runTitleScreen } from './titlescreen.js';
+import { runCredits } from './credits.js';
 
 const FADE_MS = 350;
 
@@ -69,33 +70,42 @@ function bindToolbar(getGame){
   });
 }
 
-// Starts the intro bgm on the very first gesture anywhere on the page —
-// deliberately not scoped to the canvas or the title screen, since neither
-// exists yet if the player taps during the loading screen. { once: true }
-// both caps it to firing exactly once and removes the listeners for us.
-// If that gesture lands before loadBgm() has actually finished, startBgm()
-// silently no-ops (nothing decoded yet) and the listener is already spent —
-// boot() checks this flag once loading completes and retries in that case.
-let userHasGestured = false;
-function startIntroBgmOnFirstGesture(){
-  const onGesture = () => {
-    userHasGestured = true;
-    startBgm('intro');
-  };
-  document.addEventListener('mousedown', onGesture, { once: true });
-  document.addEventListener('touchstart', onGesture, { once: true, passive: true });
-  document.addEventListener('keydown', onGesture, { once: true });
+// Resolves on the first genuine user gesture anywhere on the page. Mobile
+// (and most desktop) browsers refuse to start an AudioContext until one of
+// these fires, so this is the one deterministic place bgm playback is
+// allowed to start from — everything before it can decode audio, but must
+// never call startBgm().
+function waitForGesture(){
+  return new Promise(resolve => {
+    // preventDefault on the touchstart matters here, not just style: without
+    // it the browser follows up with a synthetic mousedown/click at the same
+    // coordinates ~300ms later, which would land on whatever canvas listener
+    // (runCredits, right after this) is attached by then and skip it unseen.
+    function onGesture(e){ e.preventDefault(); detach(); resolve(); }
+    function attach(){
+      window.addEventListener('mousedown', onGesture, { once: true });
+      window.addEventListener('touchstart', onGesture, { once: true, passive: false });
+      window.addEventListener('keydown', onGesture, { once: true });
+    }
+    function detach(){
+      window.removeEventListener('mousedown', onGesture);
+      window.removeEventListener('touchstart', onGesture);
+      window.removeEventListener('keydown', onGesture);
+    }
+    attach();
+  });
 }
 
 async function boot(){
   const canvas = document.getElementById('c');
   const ui = createUI();
   const loadingEl = document.getElementById('loading');
+  const loadingLabelEl = document.getElementById('loading-label');
+  const loadingBarEl = document.getElementById('loading-bar');
   const loadingFillEl = document.getElementById('loading-fill');
 
   let game = null;
   bindToolbar(() => game);
-  startIntroBgmOnFirstGesture();
 
   const [images] = await Promise.all([
     loadAllImages(undefined, (loaded, total) => {
@@ -106,14 +116,25 @@ async function boot(){
     // is undiagnosable. Log it instead.
     loadBgm().catch(err => console.warn('Background music failed to load:', err))
   ]);
+
+  // Loading is done, but nothing has played a sound yet — swap the loading
+  // bar for a blinking prompt and wait for a real tap/click/key before doing
+  // anything audio-related. This is the one gesture the whole boot sequence
+  // hangs off of, so the intro bgm can start right here, guaranteed-legal.
+  loadingBarEl.style.display = 'none';
+  loadingLabelEl.textContent = 'TAP TO CONTINUE';
+  loadingLabelEl.classList.add('blink');
+  await waitForGesture();
+  startBgm('intro');
   loadingEl.style.display = 'none';
-  if(userHasGestured) startBgm('intro'); // covers a gesture that landed before bgm finished loading
 
   game = createGame(canvas, images);
 
-  // The title screen owns the canvas (and its own input) until the player
-  // actually starts — bindInput/game.start only happen after that, so the
-  // two never fight over the same clicks.
+  // Two more canvas-owning scenes before real gameplay: the credit cards,
+  // then the title screen. Each owns the canvas (and its own input) until it
+  // resolves — bindInput/game.start only happen after both, so nothing ever
+  // fights over the same clicks.
+  await runCredits(canvas, images);
   await runTitleScreen(canvas, images);
 
   // A hard cut from the title card to the running game read as abrupt —

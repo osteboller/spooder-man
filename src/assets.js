@@ -21,6 +21,8 @@ export const ASSET_MANIFEST = {
     titleBg: 'assets/startscreens/Titlescreen_bg.png',
     titleLogo: 'assets/startscreens/Titlescreen_title.png',
     titlePlayer: 'assets/startscreens/Titlescreen_player.png',
+    creditsNiba: 'assets/startscreens/niba_and.png',
+    creditsOsteboller: 'assets/startscreens/osteboller_presents.png',
   }
 };
 

@@ -47,11 +47,10 @@ function centeredScale(box, factor){
 
 // Resolves once the player has actually chosen to start (not on the
 // skip-the-intro tap) — the caller awaits this to know when to move on to
-// the actual game. Audio no longer hooks in here: the intro bgm starts on
-// the earliest gesture anywhere on the page (main.js), which can happen
-// before this even exists (during the loading screen), and the level bgm
-// starts alongside game.start() — this function doesn't need to know about
-// either.
+// the actual game. Audio doesn't hook in here: the intro bgm already started
+// off the tap-to-continue gate before this ever ran (main.js), and the level
+// bgm starts alongside game.start() — this function doesn't need to know
+// about either.
 export function runTitleScreen(canvas, images){
   return new Promise(resolve => {
     const ctx = canvas.getContext('2d');
