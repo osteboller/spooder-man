@@ -3,13 +3,50 @@
 // assets/audio/ and swap the body of playSfx() for buffer playback; every
 // call site (game.js) stays the same.
 let audioCtx = null;
+let audioUnlocked = false;
 
+// Creates the context if needed, and nothing else. Deliberately does NOT try
+// to resume: decoding audio data works fine on a suspended context, and a
+// resume() attempt from outside a user gesture is guaranteed to fail and log
+// Chrome's "AudioContext was not allowed to start" warning, which made the
+// real failures below impossible to spot in the console.
 function getCtx(){
   if(!audioCtx){
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-  if(audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
+}
+
+// Must be called SYNCHRONOUSLY from inside a handler for an event that grants
+// user activation. Per the HTML spec that's mousedown, touchend, pointerup or
+// keydown — touchstart is NOT one of them, which is exactly why unlocking on
+// touchstart worked on desktop (a mouse also fires mousedown) but silently
+// failed on mobile. A microtask hop past the handler can also lose the
+// activation, so this can't be moved behind an await either.
+export function unlockAudio(){
+  const ctx = getCtx();
+  if(ctx.state !== 'suspended'){
+    audioUnlocked = true;
+    return Promise.resolve();
+  }
+  // iOS won't treat a context as unlocked until something has actually been
+  // played through it — a one-sample silent buffer satisfies that silently.
+  try{
+    const silent = ctx.createBufferSource();
+    silent.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+    silent.connect(ctx.destination);
+    silent.start(0);
+  } catch(e){ /* resume() below is the real attempt — nothing to salvage here */ }
+  return ctx.resume().then(() => { audioUnlocked = true; });
+}
+
+// For sound effects: a context can get auto-suspended again (backgrounded
+// tab), so nudge it back — but only once a real gesture has unlocked it, so
+// this can never fire a doomed resume() before that.
+function getPlaybackCtx(){
+  const ctx = getCtx();
+  if(audioUnlocked && ctx.state === 'suspended') ctx.resume();
+  return ctx;
 }
 
 // Volume is one persisted 0..1 number per channel — the toolbar's mute
@@ -64,7 +101,7 @@ export function toggleSfxMute(){ setSfxVolume(sfxVolume > 0 ? 0 : (sfxVolumeBefo
 
 function beep(freq, duration, type = 'sine', gainVal = 0.15){
   if(sfxVolume <= 0) return;
-  const ctx = getCtx();
+  const ctx = getPlaybackCtx();
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type;
@@ -79,7 +116,7 @@ function beep(freq, duration, type = 'sine', gainVal = 0.15){
 
 function pitchDrop(startFreq, endFreq, duration, type = 'square', gainVal = 0.2){
   if(sfxVolume <= 0) return;
-  const ctx = getCtx();
+  const ctx = getPlaybackCtx();
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type;
@@ -164,14 +201,8 @@ function stopBgm(){
   bgmSource = null;
 }
 
-// name: 'intro' (default) or 'level'. Switching while something is already
-// playing stops it first; calling with the track that's already playing is
-// a harmless no-op.
-export function startBgm(name = 'intro'){
-  if(currentBgmName === name && bgmSource) return;
-  if(!bgmBuffers[name]) return; // not loaded (or failed) — silently do nothing rather than throw
+function playTrack(ctx, name){
   stopBgm();
-  const ctx = getCtx();
   bgmGain = ctx.createGain();
   bgmGain.gain.value = bgmVolume;
   bgmSource = ctx.createBufferSource();
@@ -179,5 +210,27 @@ export function startBgm(name = 'intro'){
   bgmSource.loop = true;
   bgmSource.connect(bgmGain).connect(ctx.destination);
   bgmSource.start(0);
+}
+
+// name: 'intro' (default) or 'level'. Switching while something is already
+// playing stops it first; calling with the track that's already playing is
+// a harmless no-op.
+//
+// The first call has to come from inside a real gesture handler (see
+// unlockAudio). Starting a source while the context is still suspended is
+// what produced the third autoplay warning — the clock isn't advancing, so
+// the track never actually plays — hence the wait for the unlock to land
+// before touching the source at all.
+export function startBgm(name = 'intro'){
+  if(currentBgmName === name && bgmSource) return;
+  if(!bgmBuffers[name]) return; // not loaded (or failed) — silently do nothing rather than throw
   currentBgmName = name;
+  const ctx = getCtx();
+  if(ctx.state === 'running'){
+    playTrack(ctx, name);
+    return;
+  }
+  unlockAudio()
+    .then(() => { if(currentBgmName === name) playTrack(getCtx(), name); })
+    .catch(err => console.warn('Audio could not be unlocked — no music until the next gesture:', err));
 }

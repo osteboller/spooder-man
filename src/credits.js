@@ -88,7 +88,7 @@ export function runCredits(canvas, images, cardKeys = ['creditsNiba', 'creditsOs
       const alpha = cardAlpha(localMs);
 
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = '#fff'; // cards are opaque white splash art — matches the letterbox bars to the card
+      ctx.fillStyle = '#000'; // card art is fully transparent apart from the lettering, so this IS the card's background
       ctx.fillRect(0, 0, W, H);
       ctx.save();
       ctx.globalAlpha = alpha;

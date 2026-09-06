@@ -3,7 +3,7 @@ import { createUI } from './ui.js';
 import { bindInput } from './input.js';
 import { createGame } from './game.js';
 import {
-  loadBgm, startBgm,
+  loadBgm, startBgm, unlockAudio,
   getBgmVolume, getSfxVolume, setBgmVolume, setSfxVolume,
   isBgmMuted, isSfxMuted, toggleBgmMute, toggleSfxMute
 } from './audio.js';
@@ -70,31 +70,35 @@ function bindToolbar(getGame){
   });
 }
 
-// Resolves on the first genuine user gesture anywhere on the page. Mobile
-// (and most desktop) browsers refuse to start an AudioContext until one of
-// these fires — and critically, they gate on the call happening
-// *synchronously* inside the real event handler, not merely "soon after" it.
-// Awaiting this promise and calling startBgm() in the continuation adds a
-// microtask hop past the handler, which browsers intermittently (not
-// always) no longer count as the gesture — exactly the "worked a couple
-// times, then didn't" flakiness this was seen to produce. So the caller
-// passes the actual startBgm() call in as `onGestureSync`, run synchronously
-// from inside the listener itself, before this promise ever resolves.
+// Resolves on the first user gesture that can actually unlock audio.
+//
+// Two things matter and both were wrong before:
+//  1. WHICH events. Browsers only grant "user activation" for mousedown,
+//     touchend, pointerup and keydown. touchstart is NOT on that list, so
+//     unlocking from it worked on desktop (which also fires mousedown) and
+//     silently failed on every touch device — including DevTools' touch
+//     emulation, where it reproduces.
+//  2. WHEN. The unlock has to run synchronously inside the handler; awaiting
+//     this promise and calling startBgm() in the continuation puts a
+//     microtask hop in between, which browsers may no longer count as the
+//     gesture. So the caller hands the audio call in as `onGestureSync` and
+//     it runs from inside the listener, before this promise resolves.
 function waitForGesture(onGestureSync){
   return new Promise(resolve => {
-    // preventDefault on the touchstart matters here, not just style: without
-    // it the browser follows up with a synthetic mousedown/click at the same
-    // coordinates ~300ms later, which would land on whatever canvas listener
-    // (runCredits, right after this) is attached by then and skip it unseen.
+    // preventDefault matters here, not just for style: a touchend is
+    // otherwise followed by a synthetic mousedown/click at the same
+    // coordinates ~300ms later, which would land on the canvas listener
+    // runCredits attaches immediately after this and skip its first fade
+    // unseen. It does not affect the activation the event already granted.
     function onGesture(e){ e.preventDefault(); detach(); onGestureSync(); resolve(); }
     function attach(){
       window.addEventListener('mousedown', onGesture, { once: true });
-      window.addEventListener('touchstart', onGesture, { once: true, passive: false });
+      window.addEventListener('touchend', onGesture, { once: true, passive: false });
       window.addEventListener('keydown', onGesture, { once: true });
     }
     function detach(){
       window.removeEventListener('mousedown', onGesture);
-      window.removeEventListener('touchstart', onGesture);
+      window.removeEventListener('touchend', onGesture);
       window.removeEventListener('keydown', onGesture);
     }
     attach();
@@ -129,7 +133,14 @@ async function boot(){
   loadingBarEl.style.display = 'none';
   loadingLabelEl.textContent = 'TAP TO CONTINUE';
   loadingLabelEl.classList.add('blink');
-  await waitForGesture(() => startBgm('intro'));
+  // unlockAudio() as well as startBgm(), so the context still gets unlocked
+  // for sound effects even if the music itself failed to load. Its rejection
+  // is startBgm's to report, not ours — swallow it here so it isn't also an
+  // unhandled rejection.
+  await waitForGesture(() => {
+    unlockAudio().catch(() => {});
+    startBgm('intro');
+  });
   loadingEl.style.display = 'none';
 
   game = createGame(canvas, images);
