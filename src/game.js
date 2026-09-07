@@ -7,7 +7,7 @@ import {
   PLAYER_DISPLAY_SIZE
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
-import { generateCity, drawCity, cityBottomY } from './city.js';
+import { generateCity, drawCity, cityBottomY, pickCitySheet } from './city.js';
 import { updateEnemy, drawEnemy, ENEMY_WARN_MARGIN } from './enemy.js';
 import { updateCoin, drawCoin, COIN_PICKUP_RADIUS } from './coin.js';
 import { playSfx } from './audio.js';
@@ -140,7 +140,7 @@ export function createGame(canvas, images){
     coin = generateCoin(nodes, enemies);
     // Laid out once per course so the street doesn't reshuffle under a
     // mid-course respawn, and anchored to the same floor that kills you.
-    city = generateCity(nodes, floorY(nodes));
+    city = generateCity(nodes, floorY(nodes), pickCitySheet(images, bgCycleIndex - 1));
     elapsedMs = 0;
     points = 0;
     lastLandTime = 0;
@@ -900,7 +900,7 @@ export function createGame(canvas, images){
     drawBackground(ctx, bgImage, cam, W, H);
     // Same plane as the grips, but drawn before them (and before the enemies,
     // the coin and the player) so it can never hide anything you have to see.
-    drawCity(ctx, images.cityBlock, city, cam, W, H);
+    drawCity(ctx, city, cam, W, H);
 
     nodes.forEach((n,i) => {
       if(n.grabbed && i !== currentIndex){
