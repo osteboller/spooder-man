@@ -11,7 +11,7 @@ import { ANCHOR_X } from './camera.js';
 //   1. Buildings on top, separated by fully transparent gaps.
 //   2. One unbroken band of full-width opaque pixels at the bottom = sidewalk.
 //   3. That band has to tile against itself, since it repeats along the street.
-export const CITY_SHEET_KEYS = ['cityEvening', 'cityBlock'];
+export const CITY_SHEET_KEYS = ['cityBlock', 'cityEvening'];
 
 // World px per source px — the knob that decides how much of the view the
 // buildings take up. Strict pixel parity with the player works out to 3.125
@@ -30,11 +30,14 @@ function wrap(v, m){
 
 // One course picks one sheet. Same fixed-order-then-random shape as
 // pickBackground, so every variant gets seen before anything repeats.
+// Returns the key alongside the image: the course picks its street first, and
+// pickBackground needs the key to filter out skylines that don't belong behind
+// it.
 export function pickCitySheet(images, cycleIndex){
   const key = cycleIndex < CITY_SHEET_KEYS.length
     ? CITY_SHEET_KEYS[cycleIndex]
     : CITY_SHEET_KEYS[Math.floor(Math.random() * CITY_SHEET_KEYS.length)];
-  return images[key];
+  return { key, img: images[key] };
 }
 
 // Reads the two source rects straight off the art. Hard-coding them meant every

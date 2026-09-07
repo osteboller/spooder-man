@@ -134,13 +134,17 @@ export function createGame(canvas, images){
     // One resetGame() call = one course, so this advances on level-complete
     // and game-over (both route back through here) but not on a mid-course
     // respawn — see pickBackground for the fixed-order-then-random sequence.
-    bgImage = pickBackground(images, bgCycleIndex);
+    //
+    // The street is chosen BEFORE the skyline, so pickBackground can rule out
+    // the ones that don't belong behind it. Laid out once per course too, so it
+    // doesn't reshuffle under a mid-course respawn, anchored to the same floor
+    // that kills you.
+    const sheet = pickCitySheet(images, bgCycleIndex);
+    city = generateCity(nodes, floorY(nodes), sheet.img);
+    bgImage = pickBackground(images, bgCycleIndex, sheet.key);
     bgCycleIndex++;
     enemies = generateEnemies(nodes);
     coin = generateCoin(nodes, enemies);
-    // Laid out once per course so the street doesn't reshuffle under a
-    // mid-course respawn, and anchored to the same floor that kills you.
-    city = generateCity(nodes, floorY(nodes), pickCitySheet(images, bgCycleIndex - 1));
     elapsedMs = 0;
     points = 0;
     lastLandTime = 0;

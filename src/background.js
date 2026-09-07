@@ -1,17 +1,49 @@
 // Picks one city skyline per level and tiles it horizontally, scrolling slower
 // than the world (parallax) so there's depth behind the course.
-export const BACKGROUND_KEYS = ['bgGrassy', 'bgCity', 'bgDay1', 'bgNight1', 'bgNight2', 'bgEvening1'];
+// A background can name city sheets it must never appear behind. Not every
+// skyline goes with every street — a bright daylight one behind buildings lit
+// for dusk reads as a mistake rather than as variety — so those combinations
+// are excluded rather than left to chance.
+//
+// Parked, deliberately not in rotation right now: 'bgGrassy'. Its manifest
+// entry in assets.js is still there, so putting it back is one line here.
+const BACKGROUNDS = [
+  { key: 'bgTest2', notWith: ['cityEvening'] },
+  { key: 'bgCity' },
+  { key: 'bgDay1' },
+  { key: 'bgNight1' },
+  { key: 'bgNight2' },
+  { key: 'bgEvening1' },
+];
 
-// The first time through, courses step through BACKGROUND_KEYS in this fixed
-// order (one per call — game.js advances `cycleIndex` each time a course
-// starts, i.e. on level-complete or game-over, not on a mid-course respawn),
-// so a new player sees all of them deliberately. Once cycleIndex runs past the
-// list, it's random from then on.
-export function pickBackground(images, cycleIndex){
-  const key = cycleIndex < BACKGROUND_KEYS.length
-    ? BACKGROUND_KEYS[cycleIndex]
-    : BACKGROUND_KEYS[Math.floor(Math.random() * BACKGROUND_KEYS.length)];
-  return images[key];
+// The first time through, courses step through the list in this fixed order
+// (one per call — game.js advances `cycleIndex` each time a course starts,
+// i.e. on level-complete or game-over, not on a mid-course respawn), so a new
+// player sees all of them deliberately. Once cycleIndex runs past the list,
+// it's random from then on.
+//
+// `cityKey` is whichever city sheet the course already picked (game.js chooses
+// it first, precisely so this can filter against it).
+export function pickBackground(images, cycleIndex, cityKey){
+  const fits = (b) => !b.notWith || !b.notWith.includes(cityKey);
+
+  // During the fixed phase, walk FORWARD from the scheduled entry to the next
+  // one that fits. Filtering the list first and indexing into that instead
+  // would shift every later entry down a slot, which can drop a background out
+  // of the opening sequence entirely — the one thing the fixed order exists to
+  // prevent.
+  if(cycleIndex < BACKGROUNDS.length){
+    for(let i = 0; i < BACKGROUNDS.length; i++){
+      const entry = BACKGROUNDS[(cycleIndex + i) % BACKGROUNDS.length];
+      if(fits(entry)) return images[entry.key];
+    }
+  }
+
+  // Every option excluded would mean no background at all, which looks broken;
+  // an imperfect pairing is the better failure.
+  const allowed = BACKGROUNDS.filter(fits);
+  const pool = allowed.length ? allowed : BACKGROUNDS;
+  return images[pool[Math.floor(Math.random() * pool.length)].key];
 }
 
 // Wraps v into [0, m) — plain % in JS can return negative results for

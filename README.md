@@ -47,8 +47,13 @@ billed-loading over `file://`.
   `attack`, `hurt`, `swing1`, `swing2`, `swing_turn`, `swing_stop`.
 - `assets/sprites/enemy.png` — pladsholder, se planerne nedenfor.
 - `assets/backgrounds/*.png` — by-baggrunde til banerne + `Titlescreen background.png`.
-  Tilføj flere ved at droppe dem her og udvide `BACKGROUND_KEYS` i
-  `background.js` + `ASSET_MANIFEST` i `assets.js`.
+  Tilføj flere ved at droppe dem her og udvide `BACKGROUNDS` i `background.js`
+  + `ASSET_MANIFEST` i `assets.js`. En baggrund kan angive `notWith: ['<ark>']`
+  for at undgå at blive parret med et bestemt bygningsark.
+- `assets/buildings/*.png` — bygningsark til bylaget: bygninger øverst adskilt af
+  gennemsigtige mellemrum, ét ubrudt bånd af fuldbredde-ugennemsigtige pixels
+  nederst som fortov (og det bånd skal tile mod sig selv). Størrelsen er fri —
+  `city.js` måler arket selv. Tilføj med `ASSET_MANIFEST` + `CITY_SHEET_KEYS`.
 - `assets/audio/bgm/*.mp3` — baggrundsmusik. `audio.js` peger lige nu fast på
   ét nummer (`BGM_TRACK`).
 
