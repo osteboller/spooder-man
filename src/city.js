@@ -11,7 +11,7 @@ import { ANCHOR_X } from './camera.js';
 //   1. Buildings on top, separated by fully transparent gaps.
 //   2. One unbroken band of full-width opaque pixels at the bottom = sidewalk.
 //   3. That band has to tile against itself, since it repeats along the street.
-export const CITY_SHEET_KEYS = ['cityBlock'];
+export const CITY_SHEET_KEYS = ['cityEvening', 'cityBlock'];
 
 // World px per source px — the knob that decides how much of the view the
 // buildings take up. Strict pixel parity with the player works out to 3.125

@@ -1,6 +1,6 @@
 // Picks one city skyline per level and tiles it horizontally, scrolling slower
 // than the world (parallax) so there's depth behind the course.
-export const BACKGROUND_KEYS = ['bgCity', 'bgDay1', 'bgNight1', 'bgNight2', 'bgEvening1'];
+export const BACKGROUND_KEYS = ['bgGrassy', 'bgCity', 'bgDay1', 'bgNight1', 'bgNight2', 'bgEvening1'];
 
 // The first time through, courses step through BACKGROUND_KEYS in this fixed
 // order (one per call — game.js advances `cycleIndex` each time a course
