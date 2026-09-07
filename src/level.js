@@ -109,6 +109,13 @@ export function generateLevel({ waves = 5, rows = 3 } = {}){
   return list;
 }
 
+// Street level: below this you've fallen out of the course. The foreground's
+// sidewalk is drawn exactly here, so the street you can see is the same one
+// that kills you — hence one shared definition rather than two that can drift.
+export function floorY(nodes){
+  return Math.max(...nodes.map(n => n.y)) + 500;
+}
+
 export function remainingNodes(nodes){
   return nodes.filter(n => !n.grabbed);
 }

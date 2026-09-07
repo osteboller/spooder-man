@@ -1,12 +1,13 @@
 import { createCamera, toScreen, toWorld } from './camera.js';
 import { GRAVITY, simulateTrajectory, dist } from './physics.js';
-import { generateLevel, remainingNodes, nearestRemaining, generateEnemies, generateCoin } from './level.js';
+import { generateLevel, remainingNodes, nearestRemaining, generateEnemies, generateCoin, floorY } from './level.js';
 import {
   createPlayerAnimator, resetPlayerAnimator,
   updatePlayerAnimation, drawPlayer, playPlayerAnim, playerAnimFinished, setPlayerSwingFrame,
   PLAYER_DISPLAY_SIZE
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
+import { generateForeground, drawForeground } from './foreground.js';
 import { updateEnemy, drawEnemy, ENEMY_WARN_MARGIN } from './enemy.js';
 import { updateCoin, drawCoin, COIN_PICKUP_RADIUS } from './coin.js';
 import { playSfx } from './audio.js';
@@ -85,6 +86,7 @@ export function createGame(canvas, images){
   let flight = null;
   let flightFrames = 0;
   let bgImage = null;
+  let foreground = null;
   let enemies = [];
   let coin = null; // one 1-up per course, or null if none / already collected
   let elapsedMs = 0;
@@ -136,6 +138,9 @@ export function createGame(canvas, images){
     bgCycleIndex++;
     enemies = generateEnemies(nodes);
     coin = generateCoin(nodes, enemies);
+    // Laid out once per course so the street doesn't reshuffle under a
+    // mid-course respawn, and anchored to the same floor that kills you.
+    foreground = generateForeground(nodes, floorY(nodes));
     elapsedMs = 0;
     points = 0;
     lastLandTime = 0;
@@ -617,9 +622,8 @@ export function createGame(canvas, images){
         if(!landed && state === 'flying'){
           if(flightFrames > MAX_FLIGHT_FRAMES){
             landFail(ui);
-          } else {
-            const floorY = Math.max(...nodes.map(n => n.y)) + 500;
-            if(flight.y > floorY) landFail(ui);
+          } else if(flight.y > floorY(nodes)){
+            landFail(ui); // hit the street — the same line the sidewalk is drawn on
           }
         }
       }
@@ -913,7 +917,8 @@ export function createGame(canvas, images){
     drawGhostRopes();
     drawRope();
 
-    if((state === 'flying' || state === 'swinging' || state === 'dead') && flight){
+    const airborne = (state === 'flying' || state === 'swinging' || state === 'dead') && flight;
+    if(airborne){
       const { x, y } = toScreen(cam, W, H, flight.x, flight.y);
       drawPlayer(ctx, images, anim, x, y, cam.zoom);
     } else if(state !== 'won'){
@@ -921,6 +926,12 @@ export function createGame(canvas, images){
       const { x, y } = toScreen(cam, W, H, cn.x, cn.y);
       drawPlayer(ctx, images, anim, x, y, cam.zoom);
     }
+
+    // In front of the player on purpose — that's what makes it a foreground.
+    // It's handed the player's world y so it can fade back rather than hide
+    // them when they drop down among the buildings.
+    drawForeground(ctx, images.cityBlock, foreground, cam, W, H,
+      airborne ? flight.y : currentNode().y);
 
     drawFloatingTexts();
   }
