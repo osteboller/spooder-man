@@ -7,7 +7,7 @@ import {
   PLAYER_DISPLAY_SIZE
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
-import { generateForeground, drawForeground } from './foreground.js';
+import { generateCity, drawCity, cityBottomY } from './city.js';
 import { updateEnemy, drawEnemy, ENEMY_WARN_MARGIN } from './enemy.js';
 import { updateCoin, drawCoin, COIN_PICKUP_RADIUS } from './coin.js';
 import { playSfx } from './audio.js';
@@ -86,7 +86,7 @@ export function createGame(canvas, images){
   let flight = null;
   let flightFrames = 0;
   let bgImage = null;
-  let foreground = null;
+  let city = null;
   let enemies = [];
   let coin = null; // one 1-up per course, or null if none / already collected
   let elapsedMs = 0;
@@ -140,7 +140,7 @@ export function createGame(canvas, images){
     coin = generateCoin(nodes, enemies);
     // Laid out once per course so the street doesn't reshuffle under a
     // mid-course respawn, and anchored to the same floor that kills you.
-    foreground = generateForeground(nodes, floorY(nodes));
+    city = generateCity(nodes, floorY(nodes));
     elapsedMs = 0;
     points = 0;
     lastLandTime = 0;
@@ -686,6 +686,14 @@ export function createGame(canvas, images){
     const onGrip = state === 'idle' || state === 'charging';
     const zoomLerp = state === 'dead' ? 0.1 : onGrip ? 0.22 : 0.06;
     cam.zoom += (zoomTarget - cam.zoom) * zoomLerp;
+
+    // Hard floor: the last pixel of the sidewalk is the bottom of the world, so
+    // the view is never allowed past it. Has to come after the zoom lerp, since
+    // how much world the canvas covers (H/2 / zoom) changes with the zoom — a
+    // clamp computed before it would let the bottom edge slip through whenever
+    // the camera was pulling out.
+    const maxCamY = cityBottomY(city) - (H / 2) / cam.zoom;
+    if(cam.y > maxCamY) cam.y = maxCamY;
   }
 
   function drawNode(node, style){
@@ -890,6 +898,9 @@ export function createGame(canvas, images){
   function draw(){
     ctx.clearRect(0,0,W,H);
     drawBackground(ctx, bgImage, cam, W, H);
+    // Same plane as the grips, but drawn before them (and before the enemies,
+    // the coin and the player) so it can never hide anything you have to see.
+    drawCity(ctx, images.cityBlock, city, cam, W, H);
 
     nodes.forEach((n,i) => {
       if(n.grabbed && i !== currentIndex){
@@ -917,8 +928,7 @@ export function createGame(canvas, images){
     drawGhostRopes();
     drawRope();
 
-    const airborne = (state === 'flying' || state === 'swinging' || state === 'dead') && flight;
-    if(airborne){
+    if((state === 'flying' || state === 'swinging' || state === 'dead') && flight){
       const { x, y } = toScreen(cam, W, H, flight.x, flight.y);
       drawPlayer(ctx, images, anim, x, y, cam.zoom);
     } else if(state !== 'won'){
@@ -926,12 +936,6 @@ export function createGame(canvas, images){
       const { x, y } = toScreen(cam, W, H, cn.x, cn.y);
       drawPlayer(ctx, images, anim, x, y, cam.zoom);
     }
-
-    // In front of the player on purpose — that's what makes it a foreground.
-    // It's handed the player's world y so it can fade back rather than hide
-    // them when they drop down among the buildings.
-    drawForeground(ctx, images.cityBlock, foreground, cam, W, H,
-      airborne ? flight.y : currentNode().y);
 
     drawFloatingTexts();
   }
