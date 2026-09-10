@@ -44,7 +44,9 @@ billed-loading over `file://`.
 - `assets/sprites/player_*.png` — ét klip per fil, vandret strip med kvadratiske
   frames. Frame-størrelse og -antal læses automatisk ud af billedet, så du kan
   bruge hvilken opløsning du vil. Klip: `idle`, `windup`, `roll`, `grab`,
-  `attack`, `hurt`, `swing1`, `swing2`, `swing_turn`, `swing_stop`.
+  `atk`/`atk_up`/`atk_down` (angreb — valgt i `game.js` ud fra vinklen til
+  fjenden, se `pickAttackClip`), `hurt`, `swing1`, `swing2`, `swing_turn`,
+  `swing_stop`.
 - `assets/sprites/enemy.png` — pladsholder, se planerne nedenfor.
 - `assets/backgrounds/*.png` — by-baggrunde til banerne + `Titlescreen background.png`.
   Tilføj flere ved at droppe dem her og udvide `BACKGROUNDS` i `background.js`

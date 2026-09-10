@@ -26,6 +26,20 @@ export function isFinished(anim){
   return anim.finished;
 }
 
+// Switches to a clip already parked on its last frame, marked finished — for
+// resuming a pose that would long since have settled there, without replaying
+// its opening frames. The flight pose is the case that needs it: 'roll' starts
+// on the launch-off-a-grip frames, so restarting it mid-air (after an attack,
+// say) reads as having just jumped, while its final frame is exactly where a
+// flight in progress already sits.
+export function playClipAtEnd(anim, images, name){
+  playClip(anim, name);
+  const def = anim.defs[name];
+  if(!def) return;
+  anim.frameIndex = Math.max(0, frameCountOf(def, images) - 1);
+  anim.finished = true;
+}
+
 function frameCountOf(def, images){
   const img = images[def.imgKey];
   if(!img) return 1;

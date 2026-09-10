@@ -3,7 +3,7 @@ import { GRAVITY, simulateTrajectory, dist } from './physics.js';
 import { generateLevel, remainingNodes, nearestRemaining, generateEnemies, generateCoin, floorY } from './level.js';
 import {
   createPlayerAnimator, resetPlayerAnimator,
-  updatePlayerAnimation, drawPlayer, playPlayerAnim, playerAnimFinished, setPlayerSwingFrame,
+  updatePlayerAnimation, drawPlayer, playPlayerAnim, playPlayerAnimAtEnd, playerAnimFinished, setPlayerSwingFrame,
   PLAYER_DISPLAY_SIZE
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
@@ -31,18 +31,48 @@ const MAX_POWER_LEVEL = SPEEDS.length;
 const CHARGE_HOLD_MULTIPLIER = 2; // holding the button spins the aim (and charges power) this much faster
 const MAX_LIVES = 3;
 const HIT_FREEZE_MS = 120;    // brief hitstop when the player takes a hit or fails a jump
-const DEFEAT_FREEZE_MS = 90;  // shorter punch-through freeze for landing a hit on an enemy
+// The enemy encounter runs as a slow-motion beat, NOT a freeze. A freeze was
+// tried first and read badly for a specific reason: update() returns early
+// while freezeMs is counting down, which is *above* updatePlayerAnimation() —
+// so the strike animation didn't advance a single frame during the hold, then
+// played out at full speed afterwards, over empty air, with the enemy already
+// gone. Slowing the world instead keeps every frame of it visible on top of
+// the enemy it's hitting.
+const QTE_WINDOW_MS = 420;    // real ms you get to react once an enemy goes from warn to engaged
+const QTE_MOTION_SCALE = 0.12;// how slowly the world moves during the window and the strike — the "bullet time" beat
+const QTE_ZOOM = 0.95;        // camera pushes in this close for the encounter (vs ~0.5-0.66 airborne)
+const QTE_ZOOM_LERP = 0.18;   // and gets there fast, since the whole beat is under half a second
+const IMPACT_FREEZE_MS = 110; // real hitstop at the moment the enemy actually pops — what freezeMs is genuinely good for
+// ...and then the strike's LAST frame (the impact pose the art is drawn around)
+// keeps holding for this long while time and momentum are already back to
+// normal and the player is flying on. So the attack isn't something you wait
+// out before play resumes — play resumes on the impact, wearing the pose.
+const IMPACT_HOLD_MS = 260;
+// A small lunge toward whatever you're hitting, applied over the strike. It's
+// positional only — velocity is never touched, so it can't leak into the arc
+// you resume on afterwards. Deliberately NOT scaled by the slow-motion factor:
+// the world crawling while the player still thrusts forward is the whole read.
+const STRIKE_LUNGE_PX = 90;          // world units of lunge at most
+const STRIKE_LUNGE_MAX_GAP = 0.6;    // ...but never more than this share of the actual gap, so a close hit doesn't shoot past
+const STRIKE_LUNGE_LERP = 0.15;      // eased in per frame, same idiom as the camera
 const DEATH_HOLD_MS = 550;    // camera stays punched in on the frozen hurt pose this long before letting go
 const MIN_DRAG_PX = 24;       // shorter drags on release are treated as accidental, no rope fires
 const ANCHOR_MARGIN_PX = 48;  // screen px the anchor sits above the visible top edge — guarantees it's always off-screen
 const ROPE_RELEASE_HOP = 4;   // small upward kick on dismounting a rope (not on a rope-to-rope swap) — reads as a little jump off the swing
 const ROPE_CATCH_SPEED_KEEP = 1; // fraction of your speed a new rope keeps when it catches you: 1 = chaining ropes costs nothing, lower = each catch bleeds some speed
 const LAND_FORGIVENESS = 6;   // world units of extra landing leniency on top of the node/player radii
-// Enemy reach vs. yours. These used to be wildly lopsided: a tap punched from
-// e.r + ENEMY_WARN_MARGIN (~207px) away while an enemy only landed a hit
-// inside e.r + PLAYER_R*0.6 (~25px), so they were almost impossible to lose to.
-const ENEMY_HIT_MARGIN = 26;  // extra radius past the enemy's own that counts as it hitting you
-const PUNCH_RANGE = 120;      // how far a mid-flight tap reaches to take one out
+// Enemy encounters are no longer resolved by distance alone (a tap in range,
+// or a tight collision radius) — crossing into ENEMY_WARN_MARGIN opens a QTE
+// window (see the enemy loop in update() and resolveQteHit/resolveQteMiss).
+// A tap inside it is a hit; running out unanswered is a collision.
+// Which attack clip plays is a function of the relative angle to the enemy
+// being hit, not a fixed animation — steeper than 45° off horizontal counts
+// as "above"/"below", otherwise it's the same-plane strike.
+const ATTACK_CLIPS = ['attack', 'attackUp', 'attackDown'];
+function pickAttackClip(dx, dy){
+  if(Math.abs(dy) > Math.abs(dx)) return dy < 0 ? 'attackUp' : 'attackDown';
+  return 'attack';
+}
 const SWING_CAST_ANGLE = 45 * Math.PI / 180; // fixed angle (from straight down) the rope always attaches at — only left/right depends on the drag, not distance. Also ropeSwing1/2's frame-0 pose.
 const SWING_TURN_MIN_ANGLE = 15 * Math.PI / 180; // crests smaller than this skip the turn flourish entirely — a nearly settled swing just rocks through the middle frames instead
 const SWING_TURN_ARC = 12 * Math.PI / 180; // fixed angular span (not a fraction of the peak) the turn plays out over — a fixed span still takes longer for a small/dying peak, since gravity's pull back through it is weaker there too
@@ -70,6 +100,14 @@ export function createGame(canvas, images){
   let paused = false; // e.g. the options overlay is open — draw() keeps rendering the frozen frame, update() does nothing
   let state = 'idle'; // idle -> charging -> flying <-> swinging -> dead -> won
   let downState = null; // state captured at press-time, so handleUp knows what gesture it's closing out
+  // The two halves of an enemy encounter, both of which slow the world down:
+  // qte = { enemy, msLeft } is the reaction window (tap to hit, let it run out
+  // and it's a collision), strike = { enemy } is a landed hit playing out. The
+  // enemy deliberately stays un-resolved and on screen for the whole strike,
+  // so the punch has something under it, and only pops when the clip finishes.
+  let qte = null;
+  let strike = null;
+  let impactHoldMs = 0; // counts down after a strike connects, holding the impact pose while play has already resumed
   let swingSlot = 1; // alternates 1/2 on every rope cast, so the pose alternates like hand-over-hand
   let ghostRopes = []; // fading afterimages of ropes just let go — world-space endpoints + when they were released
   let floatingTexts = []; // {text, x, y, startTime} — CHARGING / ATTACK / WEB-SWIPE callouts
@@ -90,6 +128,7 @@ export function createGame(canvas, images){
   let enemies = [];
   let coin = null; // one 1-up per course, or null if none / already collected
   let elapsedMs = 0;
+  let worldMs = 0; // like elapsedMs but slowed during an encounter beat — drives enemy bobbing, so it eases with the rest of the world
   let points = 0;
   let lastLandTime = 0;
   let prevPowerLevel = 1;
@@ -146,10 +185,14 @@ export function createGame(canvas, images){
     enemies = generateEnemies(nodes);
     coin = generateCoin(nodes, enemies);
     elapsedMs = 0;
+    worldMs = 0;
     points = 0;
     lastLandTime = 0;
     lives = MAX_LIVES;
     freezeMs = 0;
+    qte = null;
+    strike = null;
+    impactHoldMs = 0;
     deathHoldMs = 0;
     ghostRopes = [];
     floatingTexts = [];
@@ -204,6 +247,13 @@ export function createGame(canvas, images){
     // `flight` object still exists, or a death mid-hold can be "undone" by
     // a rope cast that fires on release.
     if(state !== 'flying' || !flight) return false;
+    // Taking a hit locks you out of a rope until the hurt animation has
+    // actually played through (480ms of it) — being able to fire a new rope
+    // the same instant you were clipped made the hit cost nothing but a
+    // life counter, with no moment of consequence you could feel. You keep
+    // falling and can still be saved by a landing; you just can't swing out
+    // of it immediately.
+    if(anim.current === 'hurt' && !playerAnimFinished(anim)) return false;
     const dragMag = Math.hypot(dragDelta.dx, dragDelta.dy);
     if(dragMag < MIN_DRAG_PX) return false;
     const pullX = -dragDelta.dx; // mirrored: the rope goes opposite the drag
@@ -292,22 +342,95 @@ export function createGame(canvas, images){
     if(!maybeCastRope(dragDelta)) flight.vy -= ROPE_RELEASE_HOP;
   }
 
-  function tryDefeatEnemies(){
-    if(!flight) return false;
-    let defeatedAny = false;
-    for(const e of enemies){
-      if(e.resolved) continue;
-      if(dist(flight.x, flight.y, e.x, e.y) > e.r + PUNCH_RANGE) continue; // must be in range right now, not just at some earlier point in the flight
-      e.defeated = true;
-      e.resolved = true;
-      defeatedAny = true;
-      playSfx('defeat');
+  // A tap during an open QTE window always resolves it, taking priority over
+  // whatever that tap would otherwise mean (arming a rope swap while
+  // swinging, nothing in particular while flying) — see handleDown.
+  function resolveQteHit(pos){
+    const e = qte.enemy;
+    qte = null;
+    if(!flight || e.resolved) return; // shouldn't happen — defensive only
+    // Deliberately does NOT resolve the enemy yet: it stays alive and on
+    // screen for the whole swing of the arm, and only pops when the clip
+    // finishes (resolveStrikeContact). Killing it here was what made the
+    // punch look like it was landing on nothing.
+    const dx = e.x - flight.x, dy = e.y - flight.y;
+    // Lunge budget, captured now: a fixed distance toward the enemy, capped at
+    // a share of the actual gap so a hit taken from right on top of one
+    // doesn't shoot straight past it. Spent down over the strike below.
+    const gap = Math.hypot(dx, dy) || 1;
+    const reach = Math.min(STRIKE_LUNGE_PX, gap * STRIKE_LUNGE_MAX_GAP);
+    strike = {
+      enemy: e,
+      lungeX: (dx / gap) * reach,
+      lungeY: (dy / gap) * reach,
+    };
+    anim.facingLeft = dx < 0; // face the target, not wherever the flight/swing happens to be heading
+    playPlayerAnim(anim, pickAttackClip(dx, dy));
+    if(pos){
+      const w = toWorld(cam, W, H, pos.x, pos.y);
+      spawnFloatingText('ATTACK', w.x, w.y);
     }
-    if(defeatedAny){
-      playPlayerAnim(anim, 'attack');
-      freezeMs = DEFEAT_FREEZE_MS; // a short punch-through freeze to sell the hit
+  }
+
+  // Called the frame the strike animation finishes — the actual moment of
+  // contact. The enemy goes down here, with a real hitstop behind it, and the
+  // world comes back up to full speed carrying the momentum it always had.
+  function resolveStrikeContact(){
+    const e = strike.enemy;
+    strike = null;
+    e.defeated = true;
+    e.resolved = true;
+    playSfx('defeat');
+    freezeMs = IMPACT_FREEZE_MS;
+  }
+
+  // A QTE window that runs out unanswered resolves as a collision instead of
+  // a hit. Flying: the same knockback/life-loss a plain collision always
+  // used to be. Swinging: costs the rope instead of a life — you're not on
+  // solid ground to bounce off of, and losing your grip is already a real
+  // consequence (see releaseRope). No temporary invincibility after the
+  // forced release yet — open question in grib-ideer-todo.md.
+  function resolveQteMiss(ui){
+    const e = qte.enemy;
+    qte = null;
+    if(!flight || e.resolved) return; // shouldn't happen — defensive only
+    e.resolved = true;
+    playSfx('hit');
+
+    // Captured before releaseRope() below, which flips state to 'flying'.
+    const wasSwinging = state === 'swinging';
+    // Losing the rope IS the price while swinging, so no life is charged for
+    // it. This has to run BEFORE triggerHurt(): releaseRope plays the calm
+    // 'swingStop' dismount pose, and the hurt pose has to be the one that
+    // sticks. (Getting that order wrong is what made a missed window while
+    // swinging look like a voluntary let-go that sailed calmly onward.)
+    if(wasSwinging) releaseRope({ hop: false });
+
+    // Knocked back identically either way — being clipped by an enemy should
+    // feel the same whether or not you happened to be holding a rope.
+    flight.vx *= -0.6;
+    flight.vy = -Math.abs(flight.vy) * 0.5 - 2;
+
+    if(wasSwinging){
+      triggerHurt();
+    } else {
+      // At most one life per flight. A second missed window in the same trip
+      // still knocks you around and still hurts — it just can't charge you
+      // twice for one flight. landFail reads the same flag, so a fall after
+      // this doesn't double-charge either.
+      if(!flight.lifeSpent){
+        flight.lifeSpent = true;
+        loseLife(ui);
+        // Out of lives, this hit ends the run right here — no recovery chance
+        // on your last life. Otherwise, knocked around but the flight
+        // continues; a lucky landing below can still save it.
+        if(lives <= 0){
+          landFail(ui);
+          return;
+        }
+      }
+      triggerHurt();
     }
-    return defeatedAny;
   }
 
   // Shared by a real landing and a post-stumble respawn: back to a standing
@@ -315,6 +438,9 @@ export function createGame(canvas, images){
   function returnToIdleStance(){
     state = 'idle';
     flight = null;
+    qte = null;    // landing mid-beat drops it — there's no flight left to resolve it against
+    strike = null;
+    impactHoldMs = 0;
     spinDir *= -1;
     powerAccum = 0;
     currentPowerLevel = 1;
@@ -387,6 +513,9 @@ export function createGame(canvas, images){
   function landFail(ui){
     if(state === 'dead') return; // already handled — never let a fail fire twice on one flight
     state = 'dead';
+    qte = null;    // dying mid-beat cancels it outright
+    strike = null;
+    impactHoldMs = 0;
     flight.anchor = null;
     flight.ropeLength = null;
     deathHoldMs = DEATH_HOLD_MS;
@@ -408,21 +537,42 @@ export function createGame(canvas, images){
 
   function update(ui){
     const now = performance.now();
-    const dt = now - lastFrameTime;
+    const realDt = now - lastFrameTime;
     lastFrameTime = now; // kept current even while paused, so dt can't spike into a huge jump on resume
 
     if(paused) return; // draw() still runs every frame off whatever state is already there
 
+    // Hitstop — a hard stop, in real time, for impacts only. Note it returns
+    // BEFORE updatePlayerAnimation() below, so nothing animates while it
+    // holds: that's the point for an impact, and exactly why the QTE beat
+    // can't be built on it.
     if(freezeMs > 0){
-      freezeMs = Math.max(0, freezeMs - dt);
+      freezeMs = Math.max(0, freezeMs - realDt);
       return; // hold everything on the frozen frame — draw() keeps rendering it as-is
     }
 
-    if(state !== 'won' && state !== 'dead') elapsedMs += dt; // run clock stops the moment the round ends
+    // The reaction window counts down in REAL time — how long a person gets
+    // to react shouldn't stretch just because the world is in slow motion.
+    if(qte){
+      qte.msLeft -= realDt;
+      if(qte.msLeft <= 0){
+        resolveQteMiss(ui);
+        return; // that set up a hurt pose and its own hitstop; let it land next frame
+      }
+    }
+
+    // Slow motion for the encounter beat: the window itself and the strike
+    // that follows it. Scales how far the world moves this frame, nothing
+    // else — see the flight integration and updateEnemy below.
+    const motion = (qte || strike) ? QTE_MOTION_SCALE : 1;
+    const dt = realDt * motion;
+
+    if(state !== 'won' && state !== 'dead') elapsedMs += realDt; // run clock stays real — slow motion mustn't hand back time
     ui.setTime(elapsedMs);
 
+    worldMs += dt; // separate slowed clock, so enemies visibly slow down with everything else
     for(const e of enemies){
-      if(!e.resolved) updateEnemy(e, dt, elapsedMs);
+      if(!e.resolved) updateEnemy(e, dt, worldMs);
     }
     if(coin) updateCoin(coin, dt);
 
@@ -458,9 +608,36 @@ export function createGame(canvas, images){
       }
     }
 
-    updatePlayerAnimation(anim, images, dt);
-    if(state === 'flying' && anim.current === 'attack' && playerAnimFinished(anim)){
-      playPlayerAnim(anim, 'roll');
+    // The strike plays at its authored speed even while the world crawls —
+    // that contrast IS the effect: a snappy punch inside a slow beat. Every
+    // other pose (swing, roll) rides the slowed clock with the world.
+    updatePlayerAnimation(anim, images, strike ? realDt : dt);
+    if(ATTACK_CLIPS.includes(anim.current) && playerAnimFinished(anim)){
+      if(strike){
+        // The clip reaching its last frame IS the impact — the enemy goes
+        // down here, not back when the tap registered, so it was on screen
+        // for the whole swing of the arm.
+        resolveStrikeContact();
+        // Play resumes NOW, at full speed and full momentum, while that last
+        // frame keeps holding. The attack is deliberately not something you
+        // sit through before the game starts again.
+        impactHoldMs = IMPACT_HOLD_MS;
+      } else if(impactHoldMs > 0){
+        impactHoldMs = Math.max(0, impactHoldMs - realDt);
+      } else if(state === 'swinging'){
+        // Back onto the rope pose, because the swing driver reads its frames
+        // off the live rope angle — if it doesn't own the animator again the
+        // swing hangs frozen in a punch.
+        playPlayerAnim(anim, 'ropeSwing' + swingSlot);
+      } else if(state === 'flying'){
+        // Back to the flight pose, but parked on its LAST frame rather than
+        // replayed: 'roll' opens on the launch-off-a-grip frames, so playing
+        // it from the start mid-fall reads as having just jumped. Its final
+        // frame is where a flight in progress already sits anyway, since roll
+        // plays once at launch and then holds. (Not switching at all was
+        // worse still — the impact pose then stuck for the whole descent.)
+        playPlayerAnimAtEnd(anim, images, 'roll');
+      }
     }
     // swingStop is non-looping — once it finishes it just holds its last
     // frame for the rest of the free-fall, same as grab/hurt elsewhere. No
@@ -478,9 +655,30 @@ export function createGame(canvas, images){
         spawnFloatingText('1-UP!', cx, cy);
       }
 
-      flight.vy += GRAVITY;
-      flight.x += flight.vx;
-      flight.y += flight.vy;
+      // Integration is per-frame, not dt-based, so slow motion has to be
+      // applied right here rather than through dt. Velocity scales by the
+      // motion factor and gravity by its square, which is what keeps the arc
+      // the exact same shape — just travelled more slowly. Velocities
+      // themselves are never touched, so full momentum simply resumes the
+      // moment the beat ends.
+      flight.vy += GRAVITY * motion * motion;
+      flight.x += flight.vx * motion;
+      flight.y += flight.vy * motion;
+
+      // Spend down the lunge budget toward the enemy being hit — position
+      // only, so nothing here survives into the arc you resume on. Sits
+      // between the integration and the rope clamp below on purpose: while
+      // swinging, the clamp still gets the last word, so a lunge can go
+      // slack-inward freely but can't stretch the rope past its length.
+      if(strike){
+        const stepX = strike.lungeX * STRIKE_LUNGE_LERP;
+        const stepY = strike.lungeY * STRIKE_LUNGE_LERP;
+        flight.x += stepX;
+        flight.y += stepY;
+        strike.lungeX -= stepX;
+        strike.lungeY -= stepY;
+      }
+
       // The timeout clock only runs during free flight — swinging is
       // self-limiting (you choose when to let go), so it shouldn't also be
       // racing against a clock that was tuned for an untethered arc.
@@ -489,8 +687,10 @@ export function createGame(canvas, images){
       if(state === 'swinging'){
         // Frozen during the turn flourish (see below) — right at the peak of
         // a swing, vx is near zero and noisy, so continuously reading it
-        // here would make the turn pose flicker between facings.
-        if(anim.current !== 'swingTurn') anim.facingLeft = flight.vx < 0;
+        // here would make the turn pose flicker between facings. Also frozen
+        // through a strike and its impact hold, both of which face the enemy
+        // that was hit instead.
+        if(!strike && impactHoldMs <= 0 && anim.current !== 'swingTurn') anim.facingLeft = flight.vx < 0;
         // Inextensible-rope clamp: let the player move freely (rope can go
         // slack), but once they'd fly past the rope's length, pin them back
         // onto the circle and strip the outward-radial component of
@@ -519,7 +719,7 @@ export function createGame(canvas, images){
           // The `anim.current` guard covers the peak's jitter: near-zero
           // angular velocity can flicker growing/shrinking a few times in a
           // row, and this keeps those from restarting the turn.
-          if(flight.swingPrevAbsAngle > SWING_TURN_MIN_ANGLE && anim.current !== 'swingTurn'){
+          if(flight.swingPrevAbsAngle > SWING_TURN_MIN_ANGLE && anim.current !== 'swingTurn' && !strike && impactHoldMs <= 0){
             // Face whichever side of the anchor the peak was on — freezes
             // here rather than tracking noisy near-zero velocity for the
             // duration of the pose. Flip the comparison if it looks backwards.
@@ -580,37 +780,39 @@ export function createGame(canvas, images){
         }
       }
 
-      if(!flight.doomed){
+      // Only an encounter already in progress holds off the next one. Taking a
+      // hit deliberately does NOT: that used to be gated on flight.doomed,
+      // which meant one missed window disabled enemies entirely until you
+      // landed, so a second enemy in the same flight couldn't be fought at
+      // all. The "at most one life per flight" protection that flag really
+      // existed for now lives on flight.lifeSpent in resolveQteMiss.
+      if(!qte && !strike){
         for(const e of enemies){
           if(e.resolved) continue;
           const d = dist(flight.x, flight.y, e.x, e.y);
-          const warnR = e.r + ENEMY_WARN_MARGIN;
-          const hitR = e.r + ENEMY_HIT_MARGIN;
-
-          if(!e.engaged && d <= warnR) e.engaged = true;
-
-          if(d <= hitR){
-            e.resolved = true;
-            if(!e.defeated){
-              flight.vx *= -0.6;
-              flight.vy = -Math.abs(flight.vy) * 0.5 - 2;
-              flight.doomed = true;
-              flight.lifeSpent = true;
-              playSfx('hit');
-              loseLife(ui);
-              // Out of lives, this hit ends the run right here — no recovery
-              // chance on your last life. Otherwise, knocked around but the
-              // flight continues; a lucky landing below can still save it.
-              if(lives <= 0) landFail(ui); else triggerHurt();
-            }
+          if(d <= e.r + ENEMY_WARN_MARGIN){
+            // Opens the reaction window instead of resolving anything right
+            // here. From this frame on the world moves at QTE_MOTION_SCALE
+            // (see `motion` above) and the camera pushes in, until either the
+            // window is answered (resolveQteHit) or it times out
+            // (resolveQteMiss).
+            e.engaged = true;
+            qte = { enemy: e, msLeft: QTE_WINDOW_MS };
             break;
           }
         }
       }
 
-      if(state === 'flying' || state === 'swinging'){ // a fatal hit just above may have already ended this
-        // Landing stays possible even after a hit (flight.doomed) — knocked
-        // off course and slowed down, but still lucky enough to catch a node.
+      // Landing is suspended for the length of an encounter beat. Enemies sit
+      // BETWEEN grips, so at slow-motion speed you still drift a few px per
+      // frame straight into the nearest one — which used to cut the punch off
+      // mid-swing, return you to an idle stance, and leave the enemy alive
+      // even though you had answered the window correctly. The beat is under
+      // ~700ms and you barely move in it, so the grip is still right there to
+      // be caught the moment it ends.
+      if((state === 'flying' || state === 'swinging') && !qte && !strike){ // a fatal hit just above may have already ended this
+        // Landing stays possible even after taking a hit — knocked off course
+        // and slowed down, but still lucky enough to catch a node.
         let landed = false;
         for(let i = 0; i < nodes.length; i++){
           const n = nodes[i];
@@ -668,6 +870,15 @@ export function createGame(canvas, images){
     } else {
       focusX = currentNode().x; focusY = currentNode().y;
     }
+    // During an encounter beat, frame the two of you rather than just your own
+    // sprite — you need to see what you're about to hit (or be hit by) for the
+    // window to be readable at all.
+    const beat = qte || strike;
+    if(beat && flight){
+      focusX = (flight.x + beat.enemy.x) / 2;
+      focusY = (flight.y + beat.enemy.y) / 2;
+    }
+
     const lerp = (state === 'flying' || state === 'swinging') ? 0.18 : 0.14;
     cam.x += (focusX - cam.x) * lerp;
     cam.y += (focusY - cam.y) * lerp;
@@ -686,9 +897,15 @@ export function createGame(canvas, images){
     } else {
       zoomTarget = ZOOM_TARGETS[state] ?? 1.0;
     }
+    // The encounter overrides whatever the speed-based airborne zoom wanted:
+    // push in close and get there fast, since the whole beat is under half a
+    // second. Note the zoom lerp is per-frame rather than dt-based, so slow
+    // motion doesn't slow the push-in down with everything else.
+    if(beat) zoomTarget = QTE_ZOOM;
+
     // Ground zoom snaps between its steps; everything else keeps easing.
     const onGrip = state === 'idle' || state === 'charging';
-    const zoomLerp = state === 'dead' ? 0.1 : onGrip ? 0.22 : 0.06;
+    const zoomLerp = beat ? QTE_ZOOM_LERP : state === 'dead' ? 0.1 : onGrip ? 0.22 : 0.06;
     cam.zoom += (zoomTarget - cam.zoom) * zoomLerp;
 
     // Hard floor: the last pixel of the sidewalk is the bottom of the world, so
@@ -957,19 +1174,20 @@ export function createGame(canvas, images){
     },
     handleDown(ui, pos){
       downState = state; // handleUp needs to know what this gesture started on, in case it changes below
+      // An open QTE window always wins, regardless of state — it's the same
+      // tap that would otherwise arm a rope swap (swinging) or do nothing in
+      // particular (flying). downState is cleared so the matching handleUp
+      // doesn't ALSO treat this same press+release as a drag and cast/swap
+      // a rope right on top of the hit that was just thrown.
+      if(qte){ resolveQteHit(pos); downState = null; return; }
+      // Mid-strike the input is spent — swallow it rather than let the
+      // matching release swap ropes out from under the punch.
+      if(strike){ downState = null; return; }
       if(state === 'dead'){ (lives > 0 ? respawnAtCheckpoint : resetGame)(ui); return; }
       if(state === 'won'){ resetGame(ui); return; }
       // Pressing while swinging does NOT let go — it only arms the drag, so
       // you can aim the next rope before committing. The actual swap (or a
       // plain let-go, if the drag turns out too short) happens on release.
-      if(state === 'flying'){
-        // pos is null for keyboard input — no click point to float the text from.
-        if(tryDefeatEnemies() && pos){
-          const w = toWorld(cam, W, H, pos.x, pos.y);
-          spawnFloatingText('ATTACK', w.x, w.y);
-        }
-        return;
-      }
       startCharge(); // no-ops unless state is 'idle' — including while swinging
     },
     handleUp(ui, dragDelta){

@@ -1,4 +1,4 @@
-import { createAnimator, playClip, updateAnimator, drawAnimator, isFinished, setFrameByPhase } from './animator.js';
+import { createAnimator, playClip, playClipAtEnd, updateAnimator, drawAnimator, isFinished, setFrameByPhase } from './animator.js';
 
 // One clip = one strip file (assets/sprites/player_<name>.png). Tune
 // frameDuration/loop to taste — frame size and count are read from each
@@ -10,7 +10,17 @@ export const PLAYER_CLIPS = {
   grab:   { imgKey: 'playerGrab',   frameDuration: 120,  loop: false }, // swings, settles, holds last frame
   windup: { imgKey: 'playerWindup', frameDuration: 120,  loop: false }, // just the start of the jump, not a hold-loop
   roll:   { imgKey: 'playerRoll',   frameDuration: 120,  loop: false }, // plays once, freezes on last frame for the rest of the flight
-  attack: { imgKey: 'playerAttack', frameDuration: 120,  loop: false }, // plays once, then game.js resumes 'roll'
+  // Three attack clips, one per relative angle to the enemy being hit —
+  // same plane, reaching up, or reaching down. game.js picks between them
+  // (pickAttackClip) and the clip finishing is what resolves the hit, so the
+  // per-clip frameDuration is set to give all three the same TOTAL length
+  // (~300ms) despite having 3/5/4 frames: the timing of a hit shouldn't
+  // depend on which direction it came from, and the extra frames buy
+  // smoothness rather than duration. Their last frame is the impact pose,
+  // which game.js then holds for IMPACT_HOLD_MS while play resumes.
+  attack:     { imgKey: 'playerAttack',     frameDuration: 100, loop: false }, // 3 frames
+  attackUp:   { imgKey: 'playerAttackUp',   frameDuration: 60,  loop: false }, // 5 frames
+  attackDown: { imgKey: 'playerAttackDown', frameDuration: 75,  loop: false }, // 4 frames
   hurt:   { imgKey: 'playerHurt',   frameDuration: 120,  loop: false }, // plays once, freezes on last frame
 
   // Rope-swing clips. ropeSwing1/2 alternate on every rope cast (a fresh
@@ -41,6 +51,11 @@ export function resetPlayerAnimator(anim){
 
 export function playPlayerAnim(anim, name, opts){
   playClip(anim, name, opts);
+}
+
+// See playClipAtEnd — switches to a clip already settled on its last frame.
+export function playPlayerAnimAtEnd(anim, images, name){
+  playClipAtEnd(anim, images, name);
 }
 
 export function playerAnimFinished(anim){
