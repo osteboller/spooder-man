@@ -22,12 +22,25 @@ import { ANCHOR_X } from './camera.js';
 //      has to tile against itself horizontally. It's the only tiling rule.
 //   4. Everything in a theme shares one native pixel scale (the 16px grid the
 //      art is built on) — one SCALE below serves the whole set.
+// `landmark` is optional — a theme without one simply opens on a pool
+// building. The first three courses step through these in order (see
+// pickCityTheme), so a, b, c is the sequence a new player sees.
 export const CITY_THEMES = [
-  {
+  { // Red brick, dark blue stone, night — the Daily Bugle's street.
     key: 'a',
     landmark: 'bldgBugle',
     buildings: ['bldgA1', 'bldgA2', 'bldgA3', 'bldgA4', 'bldgA5', 'bldgA6'],
     sidewalk: 'sidewalkA',
+  },
+  { // Bright red brick, grey stone, gargoyles over the windows — daylight.
+    key: 'b',
+    buildings: ['bldgB1', 'bldgB2', 'bldgB3', 'bldgB4'],
+    sidewalk: 'sidewalkB',
+  },
+  { // Olive brick, grey trim, fire escapes — muted.
+    key: 'c',
+    buildings: ['bldgC1', 'bldgC2', 'bldgC3', 'bldgC4', 'bldgC5'],
+    sidewalk: 'sidewalkC',
   },
 ];
 
@@ -77,7 +90,7 @@ export function cityBottomY(city){
 export function generateCity(nodes, streetY, images, theme){
   const pool = theme.buildings.map(k => images[k]).filter(Boolean);
   const sidewalk = images[theme.sidewalk];
-  const landmark = images[theme.landmark];
+  const landmark = theme.landmark ? images[theme.landmark] : null;
   if(!pool.length || !sidewalk) return null;
 
   const from = nodes[0].x * PARALLAX_X - LEAD_IN;

@@ -26,6 +26,19 @@ export const ASSET_MANIFEST = {
     bldgA5: 'assets/buildings/building_a5.png',
     bldgA6: 'assets/buildings/building_a6.png',
     sidewalkA: 'assets/buildings/sidewalk_a.png',
+    // Theme 'b' — red brick, grey stone, gargoyles. No landmark.
+    bldgB1: 'assets/buildings/building_b1.png',
+    bldgB2: 'assets/buildings/building_b2.png',
+    bldgB3: 'assets/buildings/building_b3.png',
+    bldgB4: 'assets/buildings/building_b4.png',
+    sidewalkB: 'assets/buildings/sidewalk_b.png',
+    // Theme 'c' — olive brick, grey trim, fire escapes. No landmark.
+    bldgC1: 'assets/buildings/building_c1.png',
+    bldgC2: 'assets/buildings/building_c2.png',
+    bldgC3: 'assets/buildings/building_c3.png',
+    bldgC4: 'assets/buildings/building_c4.png',
+    bldgC5: 'assets/buildings/building_c5.png',
+    sidewalkC: 'assets/buildings/sidewalk_c.png',
     bgCity: 'assets/backgrounds/new background test 512x600.png',
     bgTest2: 'assets/backgrounds/new background test 2 512x256.png',
     bgGrassy: 'assets/backgrounds/new background grassy 512x256.png', // parked — see BACKGROUNDS in background.js
