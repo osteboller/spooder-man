@@ -5,15 +5,31 @@
 // for dusk reads as a mistake rather than as variety — so those combinations
 // are excluded rather than left to chance.
 //
+// Each background scrolls at its OWN rate. `parallax` is the fraction of the
+// camera's horizontal movement the layer follows: 0 would be painted onto the
+// sky, 1 would move with the grips. A distant horizon of tiny skyscrapers
+// wants a low number; a near skyline with readable windows wants a higher one.
+// They all used to share drawBackground's 0.35 default, so a far horizon and
+// a close-up moved at exactly the same speed — that's the depth cue this is
+// for. `parallaxY` is the same idea vertically, and only matters for art tall
+// enough to have slack after covering the canvas (see drawBackground).
+//
+// The numbers are a first pass by what each image depicts — they're meant to
+// be tuned by eye, one line each.
+//
 // Parked, deliberately not in rotation right now: 'bgGrassy'. Its manifest
 // entry in assets.js is still there, so putting it back is one line here.
 const BACKGROUNDS = [
-  { key: 'bgTest2', notWith: ['cityEvening'] },
-  { key: 'bgCity' },
-  { key: 'bgDay1' },
-  { key: 'bgNight1' },
-  { key: 'bgNight2' },
-  { key: 'bgEvening1' },
+  // notWith names city THEME keys (CITY_THEMES in city.js, e.g. 'a'). bgTest2's
+  // bright daylight clashes with the dark teal evening buildings — add that
+  // theme's key here once it exists; the only theme so far is the red-brick
+  // Bugle family, which this skyline was always fine behind.
+  { key: 'bgTest2',    parallax: 0.30, parallaxY: 0.45, notWith: [] }, // grey towers, birds — mid distance
+  { key: 'bgCity',     parallax: 0.20, parallaxY: 0.45 }, // tall night skyline — far, and the only one tall enough to pan much vertically
+  { key: 'bgDay1',     parallax: 0.50, parallaxY: 0.45 }, // the four SNES rips have clear windows — near
+  { key: 'bgNight1',   parallax: 0.50, parallaxY: 0.45 },
+  { key: 'bgNight2',   parallax: 0.50, parallaxY: 0.45 },
+  { key: 'bgEvening1', parallax: 0.50, parallaxY: 0.45 },
 ];
 
 // The first time through, courses step through the list in this fixed order
@@ -24,8 +40,12 @@ const BACKGROUNDS = [
 //
 // `cityKey` is whichever city sheet the course already picked (game.js chooses
 // it first, precisely so this can filter against it).
+//
+// Returns the image together with its scroll rates — { img, parallax,
+// parallaxY } — since the rates belong to the picture, not to the caller.
 export function pickBackground(images, cycleIndex, cityKey){
   const fits = (b) => !b.notWith || !b.notWith.includes(cityKey);
+  const resolve = (entry) => ({ img: images[entry.key], parallax: entry.parallax, parallaxY: entry.parallaxY });
 
   // During the fixed phase, walk FORWARD from the scheduled entry to the next
   // one that fits. Filtering the list first and indexing into that instead
@@ -35,7 +55,7 @@ export function pickBackground(images, cycleIndex, cityKey){
   if(cycleIndex < BACKGROUNDS.length){
     for(let i = 0; i < BACKGROUNDS.length; i++){
       const entry = BACKGROUNDS[(cycleIndex + i) % BACKGROUNDS.length];
-      if(fits(entry)) return images[entry.key];
+      if(fits(entry)) return resolve(entry);
     }
   }
 
@@ -43,7 +63,7 @@ export function pickBackground(images, cycleIndex, cityKey){
   // an imperfect pairing is the better failure.
   const allowed = BACKGROUNDS.filter(fits);
   const pool = allowed.length ? allowed : BACKGROUNDS;
-  return images[pool[Math.floor(Math.random() * pool.length)].key];
+  return resolve(pool[Math.floor(Math.random() * pool.length)]);
 }
 
 // Wraps v into [0, m) — plain % in JS can return negative results for
@@ -63,6 +83,10 @@ function scaleFor(img, canvasH){
   return Math.max(MIN_SCALE, Math.ceil(canvasH / img.height));
 }
 
+// parallax/parallaxY come from the background's own entry (see BACKGROUNDS and
+// pickBackground). The defaults here are a safety net for a caller that
+// doesn't pass them, not a value anything is meant to rely on — relying on
+// them is exactly how every background ended up scrolling at the same speed.
 // parallaxY only does anything for art tall enough to have slack after
 // covering the canvas — the taller the source, the further it can pan before
 // clamping at its own top or bottom edge.

@@ -50,12 +50,17 @@ billed-loading over `file://`.
 - `assets/sprites/enemy.png` — pladsholder, se planerne nedenfor.
 - `assets/backgrounds/*.png` — by-baggrunde til banerne + `Titlescreen background.png`.
   Tilføj flere ved at droppe dem her og udvide `BACKGROUNDS` i `background.js`
-  + `ASSET_MANIFEST` i `assets.js`. En baggrund kan angive `notWith: ['<ark>']`
-  for at undgå at blive parret med et bestemt bygningsark.
-- `assets/buildings/*.png` — bygningsark til bylaget: bygninger øverst adskilt af
-  gennemsigtige mellemrum, ét ubrudt bånd af fuldbredde-ugennemsigtige pixels
-  nederst som fortov (og det bånd skal tile mod sig selv). Størrelsen er fri —
-  `city.js` måler arket selv. Tilføj med `ASSET_MANIFEST` + `CITY_SHEET_KEYS`.
+  + `ASSET_MANIFEST` i `assets.js`. Hver baggrund har sin egen `parallax`
+  (rulle-hastighed, fjern horisont lav / nære vinduer høj) og kan angive
+  `notWith: ['<tema>']` for at undgå at blive parret med et bestemt by-tema.
+- `assets/buildings/*.png` — bylaget stitches individuelle bygninger kant-mod-kant
+  langs ét fortovs-tile. Et *tema* er ét landmark (vises én gang, først),
+  en pulje af bygninger (tilfældig rækkefølge, aldrig samme to gange i træk)
+  og ét fortov — se `CITY_THEMES` i `city.js`. Regler for kunsten: PNG'ens
+  fulde bredde er fodaftryk (tomme kant-kolonner = bevidst afstand, de bevares),
+  nederste pixelrække er gadeplan (bundforankres, så højde er fri), fortovet
+  skal tile mod sig selv, og alt i et tema deler samme 16px-gitter. Nyt tema =
+  filerne + `ASSET_MANIFEST` + en entry i `CITY_THEMES`.
 - `assets/audio/bgm/*.mp3` — baggrundsmusik. `audio.js` peger lige nu fast på
   ét nummer (`BGM_TRACK`).
 

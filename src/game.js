@@ -7,7 +7,7 @@ import {
   PLAYER_DISPLAY_SIZE
 } from './player.js';
 import { pickBackground, drawBackground } from './background.js';
-import { generateCity, drawCity, cityBottomY, pickCitySheet } from './city.js';
+import { generateCity, drawCity, cityBottomY, pickCityTheme } from './city.js';
 import { updateEnemy, drawEnemy, ENEMY_WARN_MARGIN } from './enemy.js';
 import { updateCoin, drawCoin, COIN_PICKUP_RADIUS } from './coin.js';
 import { playSfx } from './audio.js';
@@ -77,6 +77,12 @@ const SWING_CAST_ANGLE = 45 * Math.PI / 180; // fixed angle (from straight down)
 const SWING_TURN_MIN_ANGLE = 15 * Math.PI / 180; // crests smaller than this skip the turn flourish entirely — a nearly settled swing just rocks through the middle frames instead
 const SWING_TURN_ARC = 12 * Math.PI / 180; // fixed angular span (not a fraction of the peak) the turn plays out over — a fixed span still takes longer for a small/dying peak, since gravity's pull back through it is weaker there too
 const ROPE_FADE_MS = 1400;      // how long a released rope lingers as a fading afterimage
+// A rope lost to a hit SNAPS instead: the free end recoils back up the line
+// toward the anchor and it's gone in a few frames, rather than settling into
+// the slow pendulum a rope you chose to let go of does. Kept longer than the
+// hurt hitstop (120ms) so there's still a visible whip once time resumes.
+const ROPE_SNAP_MS = 420;
+const ROPE_SNAP_RECOIL = 0.25;  // fraction of the remaining distance to the anchor the free end covers per frame
 const ROPE_DOT_SPACING_PX = 11;      // spacing between rope dots at zoom 1
 // Fraction of the player's own on-screen size (PLAYER_DISPLAY_SIZE * zoom)
 // hidden nearest them, on both the live rope and its afterimage — tied to
@@ -123,7 +129,7 @@ export function createGame(canvas, images){
   let currentPowerProgress = 0;
   let flight = null;
   let flightFrames = 0;
-  let bgImage = null;
+  let bg = null; // { img, parallax, parallaxY } — the course's skyline and its own scroll rates, see pickBackground
   let city = null;
   let enemies = [];
   let coin = null; // one 1-up per course, or null if none / already collected
@@ -178,9 +184,9 @@ export function createGame(canvas, images){
     // the ones that don't belong behind it. Laid out once per course too, so it
     // doesn't reshuffle under a mid-course respawn, anchored to the same floor
     // that kills you.
-    const sheet = pickCitySheet(images, bgCycleIndex);
-    city = generateCity(nodes, floorY(nodes), sheet.img);
-    bgImage = pickBackground(images, bgCycleIndex, sheet.key);
+    const theme = pickCityTheme(bgCycleIndex);
+    city = generateCity(nodes, floorY(nodes), images, theme);
+    bg = pickBackground(images, bgCycleIndex, theme.key);
     bgCycleIndex++;
     enemies = generateEnemies(nodes);
     coin = generateCoin(nodes, enemies);
@@ -249,11 +255,11 @@ export function createGame(canvas, images){
     if(state !== 'flying' || !flight) return false;
     // Taking a hit locks you out of a rope until the hurt animation has
     // actually played through (480ms of it) — being able to fire a new rope
-    // the same instant you were clipped made the hit cost nothing but a
-    // life counter, with no moment of consequence you could feel. You keep
-    // falling and can still be saved by a landing; you just can't swing out
-    // of it immediately.
-    if(anim.current === 'hurt' && !playerAnimFinished(anim)) return false;
+    // the same instant you were clipped made the hit cost nothing you could
+    // feel. You keep falling and can still be saved by a landing; you just
+    // can't swing out of it immediately. Same window as the invincibility —
+    // see isStunned.
+    if(isStunned()) return false;
     const dragMag = Math.hypot(dragDelta.dx, dragDelta.dy);
     if(dragMag < MIN_DRAG_PX) return false;
     const pullX = -dragDelta.dx; // mirrored: the rope goes opposite the drag
@@ -314,14 +320,19 @@ export function createGame(canvas, images){
   // back into normal projectile physics. The little upward kick is for
   // actually dismounting — a rope-to-rope handoff passes hop:false, since
   // being nudged upward mid-handoff just fights the swing you're continuing.
-  function releaseRope({ hop = true } = {}){
+  // `snap` is for a rope lost to an enemy hit rather than let go of: the web
+  // breaks — a different afterimage (it recoils instead of swinging, see
+  // updateGhostRopes) and a different sound — so it never reads as the calm
+  // dismount a chosen release is.
+  function releaseRope({ hop = true, snap = false } = {}){
     // The rope doesn't just vanish — its free end keeps swinging on the same
     // anchor under its own momentum (a tiny independent pendulum sim, see
     // updateGhostRopes) while it fades out, instead of freezing in place.
     ghostRopes.push({
       x: flight.x, y: flight.y, vx: flight.vx, vy: flight.vy,
       anchorX: flight.anchor.x, anchorY: flight.anchor.y, ropeLength: flight.ropeLength,
-      startTime: performance.now()
+      startTime: performance.now(),
+      snapped: snap,
     });
     flight.anchor = null;
     flight.ropeLength = null;
@@ -329,6 +340,7 @@ export function createGame(canvas, images){
     flightFrames = 0; // fresh timeout budget for this new free-flight segment — don't inherit stale pre-swing time
     state = 'flying';
     playPlayerAnim(anim, 'swingStop');
+    if(snap) playSfx('snap');
   }
 
   // The release-gesture's drag can aim a NEW rope before the old one lets
@@ -390,47 +402,31 @@ export function createGame(canvas, images){
   // solid ground to bounce off of, and losing your grip is already a real
   // consequence (see releaseRope). No temporary invincibility after the
   // forced release yet — open question in grib-ideer-todo.md.
-  function resolveQteMiss(ui){
+  // A QTE window that runs out unanswered is a collision — but never, on its
+  // own, a lost life. One rule regardless of state: the hit knocks you around,
+  // plays the hurt pose, and locks the rope (and grants invincibility) for as
+  // long as that pose lasts. The life is only lost if you then fail to land —
+  // see landFail. A collision puts the life at risk rather than taking it,
+  // which is what makes recovering from one worth attempting.
+  //
+  // Swinging additionally costs the rope, which snaps (see releaseRope) rather
+  // than being calmly let go of.
+  function resolveQteMiss(){
     const e = qte.enemy;
     qte = null;
     if(!flight || e.resolved) return; // shouldn't happen — defensive only
     e.resolved = true;
     playSfx('hit');
 
-    // Captured before releaseRope() below, which flips state to 'flying'.
-    const wasSwinging = state === 'swinging';
-    // Losing the rope IS the price while swinging, so no life is charged for
-    // it. This has to run BEFORE triggerHurt(): releaseRope plays the calm
-    // 'swingStop' dismount pose, and the hurt pose has to be the one that
-    // sticks. (Getting that order wrong is what made a missed window while
-    // swinging look like a voluntary let-go that sailed calmly onward.)
-    if(wasSwinging) releaseRope({ hop: false });
+    // Must run BEFORE triggerHurt(): releaseRope plays the calm 'swingStop'
+    // dismount pose, and the hurt pose has to be the one that sticks. (Getting
+    // that order wrong once made a missed window while swinging look like a
+    // voluntary let-go that sailed calmly onward.)
+    if(state === 'swinging') releaseRope({ hop: false, snap: true });
 
-    // Knocked back identically either way — being clipped by an enemy should
-    // feel the same whether or not you happened to be holding a rope.
     flight.vx *= -0.6;
     flight.vy = -Math.abs(flight.vy) * 0.5 - 2;
-
-    if(wasSwinging){
-      triggerHurt();
-    } else {
-      // At most one life per flight. A second missed window in the same trip
-      // still knocks you around and still hurts — it just can't charge you
-      // twice for one flight. landFail reads the same flag, so a fall after
-      // this doesn't double-charge either.
-      if(!flight.lifeSpent){
-        flight.lifeSpent = true;
-        loseLife(ui);
-        // Out of lives, this hit ends the run right here — no recovery chance
-        // on your last life. Otherwise, knocked around but the flight
-        // continues; a lucky landing below can still save it.
-        if(lives <= 0){
-          landFail(ui);
-          return;
-        }
-      }
-      triggerHurt();
-    }
+    triggerHurt();
   }
 
   // Shared by a real landing and a post-stumble respawn: back to a standing
@@ -498,8 +494,22 @@ export function createGame(canvas, images){
     ui.hideMessage();
   }
 
+  // The one window that means "you've just been hit": the hurt clip is still
+  // playing (480ms). It is the SAME predicate for both consequences of a hit —
+  // you can't fire a rope during it, and no enemy can open a new window on you
+  // during it — so the two signals can never drift apart, and the hurt pose on
+  // screen is exactly the span you're both locked out and safe for.
+  function isStunned(){
+    return anim.current === 'hurt' && !playerAnimFinished(anim);
+  }
+
   function triggerHurt(){
-    if(anim.current !== 'hurt'){
+    // Replays if the previous hurt pose has already FINISHED (the clip holds
+    // its last frame for the rest of the fall, so anim.current stays 'hurt'
+    // long after it's done). Without that, a second hit later in the same
+    // flight got no pose and no hitstop at all. Skipped only while a hurt is
+    // still actively playing — which isStunned() makes unreachable anyway.
+    if(!isStunned()){
       playPlayerAnim(anim, 'hurt');
       freezeMs = HIT_FREEZE_MS; // a beat of stillness right on impact, for weight
     }
@@ -526,7 +536,11 @@ export function createGame(canvas, images){
     playPlayerAnim(anim, 'hurt');
     freezeMs = HIT_FREEZE_MS;
     playSfx('fail');
-    if(!flight.lifeSpent) loseLife(ui); // a hit already charged this same flight a life
+    // Falling out is the ONLY thing that costs a life — an enemy collision
+    // earlier in the flight knocked you around and left you here, but didn't
+    // charge anything itself (see resolveQteMiss), so there's no double-charge
+    // to guard against.
+    loseLife(ui);
 
     if(lives > 0){
       ui.showMessage(`YOU FELL!<br><small>${lives} ${lives === 1 ? 'LIFE' : 'LIVES'} LEFT — press to continue</small>`);
@@ -556,7 +570,7 @@ export function createGame(canvas, images){
     if(qte){
       qte.msLeft -= realDt;
       if(qte.msLeft <= 0){
-        resolveQteMiss(ui);
+        resolveQteMiss();
         return; // that set up a hurt pose and its own hitstop; let it land next frame
       }
     }
@@ -780,13 +794,14 @@ export function createGame(canvas, images){
         }
       }
 
-      // Only an encounter already in progress holds off the next one. Taking a
-      // hit deliberately does NOT: that used to be gated on flight.doomed,
-      // which meant one missed window disabled enemies entirely until you
-      // landed, so a second enemy in the same flight couldn't be fought at
-      // all. The "at most one life per flight" protection that flag really
-      // existed for now lives on flight.lifeSpent in resolveQteMiss.
-      if(!qte && !strike){
+      // Held off by an encounter already in progress, or by the brief
+      // invincibility while the hurt pose plays (isStunned) — so the enemy that
+      // just clipped you can't clip you again on the way down. It is NOT held
+      // off for the rest of the flight: that used to be gated on a
+      // flight.doomed flag, which meant one missed window disabled enemies
+      // entirely until you landed, and a second enemy in the same flight
+      // couldn't be fought at all.
+      if(!qte && !strike && !isStunned()){
         for(const e of enemies){
           if(e.resolved) continue;
           const d = dist(flight.x, flight.y, e.x, e.y);
@@ -1039,10 +1054,23 @@ export function createGame(canvas, images){
   // A released rope's free end keeps swinging on the same anchor under its
   // own momentum — a tiny standalone pendulum sim, same math as the live
   // rope's clamp — instead of freezing in place, right up until it fades out.
+  function ghostRopeLifeMs(g){
+    return g.snapped ? ROPE_SNAP_MS : ROPE_FADE_MS;
+  }
+
   function updateGhostRopes(){
     const now = performance.now();
-    ghostRopes = ghostRopes.filter(g => now - g.startTime < ROPE_FADE_MS);
+    ghostRopes = ghostRopes.filter(g => now - g.startTime < ghostRopeLifeMs(g));
     for(const g of ghostRopes){
+      if(g.snapped){
+        // A snapped web recoils: the free end whips back up the line toward
+        // the anchor and it's gone in a handful of frames. No gravity, no
+        // pendulum clamp — nothing like the slow settle of a rope you chose
+        // to let go of, which is the whole point of it looking different.
+        g.x += (g.anchorX - g.x) * ROPE_SNAP_RECOIL;
+        g.y += (g.anchorY - g.y) * ROPE_SNAP_RECOIL;
+        continue;
+      }
       g.vy += GRAVITY;
       g.x += g.vx;
       g.y += g.vy;
@@ -1073,7 +1101,7 @@ export function createGame(canvas, images){
     for(const g of ghostRopes){
       const a = toScreen(cam, W, H, g.x, g.y);
       const b = toScreen(cam, W, H, g.anchorX, g.anchorY);
-      drawRopeSegment(a, b, 1 - (now - g.startTime) / ROPE_FADE_MS);
+      drawRopeSegment(a, b, 1 - (now - g.startTime) / ghostRopeLifeMs(g));
     }
   }
 
@@ -1118,7 +1146,9 @@ export function createGame(canvas, images){
 
   function draw(){
     ctx.clearRect(0,0,W,H);
-    drawBackground(ctx, bgImage, cam, W, H);
+    // The rates are passed explicitly — leaning on drawBackground's defaults is
+    // what had every skyline scrolling at the same speed regardless of depth.
+    if(bg) drawBackground(ctx, bg.img, cam, W, H, bg.parallax, bg.parallaxY);
     // Same plane as the grips, but drawn before them (and before the enemies,
     // the coin and the player) so it can never hide anything you have to see.
     drawCity(ctx, city, cam, W, H);

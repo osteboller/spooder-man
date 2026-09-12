@@ -152,6 +152,12 @@ export function playSfx(name){
     case 'hit':
       pitchDrop(220, 55, 0.22, 'square', 0.22);
       break;
+    case 'snap':
+      // The web breaking. Layers on top of 'hit' (both fire on a missed window
+      // while swinging), so it's pitched far above it and over in a tenth of
+      // the time: a crack riding on the thud, not a second thud.
+      pitchDrop(1600, 180, 0.09, 'sawtooth', 0.22);
+      break;
     case 'powerup':
       beep(520, 0.08, 'square', 0.1);
       setTimeout(() => beep(780, 0.09, 'square', 0.11), 55);

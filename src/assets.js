@@ -16,8 +16,16 @@ export const ASSET_MANIFEST = {
     playerSwingStop: 'assets/sprites/player_swing_stop.png',
     enemy: 'assets/sprites/enemy.png',
     coin: 'assets/sprites/coin_16x16.png',
-    cityBlock: 'assets/buildings/daily_bugle_test.png',
-    cityEvening: 'assets/buildings/evening_buildings_test.png',
+    // City theme 'a' (see CITY_THEMES in city.js): one landmark that opens
+    // every street, a pool of buildings stitched after it, one sidewalk tile.
+    bldgBugle: 'assets/buildings/b_daily_bugle.png',
+    bldgA1: 'assets/buildings/building_a1.png',
+    bldgA2: 'assets/buildings/building_a2.png',
+    bldgA3: 'assets/buildings/building_a3.png',
+    bldgA4: 'assets/buildings/building_a4.png',
+    bldgA5: 'assets/buildings/building_a5.png',
+    bldgA6: 'assets/buildings/building_a6.png',
+    sidewalkA: 'assets/buildings/sidewalk_a.png',
     bgCity: 'assets/backgrounds/new background test 512x600.png',
     bgTest2: 'assets/backgrounds/new background test 2 512x256.png',
     bgGrassy: 'assets/backgrounds/new background grassy 512x256.png', // parked — see BACKGROUNDS in background.js
